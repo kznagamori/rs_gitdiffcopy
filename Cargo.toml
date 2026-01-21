@@ -1,0 +1,77 @@
+[package]
+name = "rs_gitdiffcopy"
+version = "1.0.0"
+edition = "2024"
+description = "Git diff コマンドの出力を初心者・非技術者でも視覚的に分かるツール"
+authors = ["kznagamori"]
+license = "MIT"
+repository = "https://github.com/kznagamori/rs_gitdiffcopy"
+keywords = ["git", "diff", "compare", "copy"]
+categories = ["command-line-utilities", "development-tools"]
+
+[dependencies]
+# CLI引数解析
+clap = { version = "4", features = ["derive", "env"] }
+
+# 設定ファイル・シリアライズ
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+
+# Excel出力
+rust_xlsxwriter = "0.80"
+
+# 並列処理
+rayon = "1.10"
+
+# 進捗表示
+indicatif = "0.17"
+
+# カラー出力
+colored = "2"
+
+# ファイルパターンマッチ（glob形式）
+globset = "0.4"
+
+# 日時処理
+chrono = { version = "0.4", features = ["serde"] }
+
+# ファイルタイムスタンプ操作
+filetime = "0.2"
+
+# Unicode文字幅計算
+unicode-width = "0.2"
+
+# エラーハンドリング
+anyhow = "1"
+thiserror = "2"
+
+# ログ出力
+log = "0.4"
+env_logger = "0.11"
+
+# ユーザー入力確認
+dialoguer = "0.11"
+
+# ディレクトリ操作
+dirs = "6"
+
+# テンポラリファイル
+tempfile = "3"
+
+# 正規表現
+regex = "1"
+
+# ディレクトリ走査
+walkdir = "2"
+
+# ターミナル判定
+atty = "0.2"
+
+[dev-dependencies]
+# Excelファイル読み取り（テスト用）
+calamine = "0.26"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true
