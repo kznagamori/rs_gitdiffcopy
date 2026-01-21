@@ -338,8 +338,9 @@ impl<'a> ExcelWriter<'a> {
         let entries = Self::build_file_tree_entries(&sorted_files);
 
         // 最大深度を計算（列数の決定）
+        // Status列はパスコンポーネントの後ろに配置するため +1
         let max_depth = entries.iter().map(|e| e.depth).max().unwrap_or(0);
-        let status_col = max_depth as u16;
+        let status_col = (max_depth + 1) as u16;
 
         // ヘッダー（罫線付き）
         let header_format = Format::new()
@@ -348,7 +349,7 @@ impl<'a> ExcelWriter<'a> {
             .set_font_color(Color::White)
             .set_border(FormatBorder::Thin);
 
-        // A1に "Path"、他は空
+        // A1に "Path"、他は空、最後にStatus
         worksheet
             .write_string_with_format(0, 0, "Path", &header_format)
             .map_err(|e| crate::error::AppError::Other(e.to_string()))?;
@@ -827,8 +828,9 @@ impl<'a> ExcelWriter<'a> {
         let entries = Self::build_three_way_file_tree_entries(&sorted_files);
 
         // 最大深度を計算（列数の決定）
+        // Status列はパスコンポーネントの後ろに配置するため +1
         let max_depth = entries.iter().map(|e| e.depth).max().unwrap_or(0);
-        let status_col = max_depth as u16;
+        let status_col = (max_depth + 1) as u16;
 
         // ヘッダー（罫線付き）
         let header_format = Format::new()
@@ -837,7 +839,7 @@ impl<'a> ExcelWriter<'a> {
             .set_font_color(Color::White)
             .set_border(FormatBorder::Thin);
 
-        // A1に "Path"、他は空
+        // A1に "Path"、他は空、最後にStatus
         worksheet
             .write_string_with_format(0, 0, "Path", &header_format)
             .map_err(|e| crate::error::AppError::Other(e.to_string()))?;

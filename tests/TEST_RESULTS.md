@@ -15,8 +15,8 @@
 | カテゴリ | テスト数 | PASS | FAIL | スキップ |
 |---------|---------|------|------|---------|
 | ユニットテスト | 148 | 148 | 0 | 0 |
-| 結合テスト | 149 | 149 | 0 | 0 |
-| **合計** | **297** | **297** | **0** | **0** |
+| 結合テスト | 151 | 151 | 0 | 0 |
+| **合計** | **299** | **299** | **0** | **0** |
 
 ---
 
@@ -287,12 +287,14 @@
 | ALIGN-002 | test_three_way_summary_file_alignment_japanese | PASS | 三者間日本語ファイル名整列 |
 | ALIGN-003 | test_three_way_file_tree_alignment | PASS | 三者間File Tree整列（異なる深さ） |
 
-### 25. ExcelファイルTree ディレクトリ分割形式テスト (2テスト)
+### 25. ExcelファイルTree ディレクトリ分割形式テスト (4テスト)
 
 | テストID | テスト名 | 結果 | 備考 |
 |---------|---------|------|------|
 | EXCEL-TREE-001 | test_excel_file_tree_directory_split_two_way | PASS | 二者間比較FileTreeディレクトリ分割 |
 | EXCEL-TREE-002 | test_excel_file_tree_directory_split_three_way | PASS | 三者間比較FileTreeディレクトリ分割 |
+| EXCEL-TREE-003 | test_excel_file_tree_status_column_position_two_way | PASS | 二者間比較Status列位置検証 |
+| EXCEL-TREE-004 | test_excel_file_tree_status_column_position_three_way | PASS | 三者間比較Status列位置検証 |
 
 ### 26. Excelファイル グルーピング機能テスト (3テスト)
 
@@ -506,6 +508,7 @@
 | 2026-01-21 | 23:30 | 114/114 | 135/135 | ALL PASSED | Unitテスト大幅追加（88件追加） |
 | 2026-01-21 | 23:50 | 134/134 | 144/144 | ALL PASSED | 三者間グループキーワード機能追加、Unit+結合テスト追加（29件追加） |
 | 2026-01-22 | 00:30 | 148/148 | 149/149 | ALL PASSED | Excel行グルーピング機能、FileTree分割テスト追加（19件追加） |
+| 2026-01-22 | 01:00 | 148/148 | 151/151 | ALL PASSED | Status列位置検証テスト追加（2件追加）、status_col修正対応 |
 
 ---
 
@@ -558,3 +561,4 @@ cargo test 2>&1 | tee test_output.txt
 | 2026-01-22 | excel.rs にExcel行グルーピング機能を追加（apply_row_grouping, calculate_row_groups） |
 | 2026-01-22 | summary.rs のdisplay_width関数でBox Drawing文字を幅2として計算するよう修正 |
 | 2026-01-22 | Cargo.toml の rust_xlsxwriter を0.92に更新（group_rows API対応） |
+| 2026-01-22 | excel.rs のwrite_file_tree_sheet, write_three_way_file_tree_sheetでstatus_col計算を修正（max_depth + 1）|

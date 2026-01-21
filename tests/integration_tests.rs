@@ -4302,6 +4302,156 @@ fn test_excel_file_tree_directory_split_three_way() {
     }
 }
 
+/// EXCEL-TREE-003: FileTreeシートのStatus列位置検証（二者間比較）
+/// Status列はパスコンポーネントの後ろ（max_depth + 1）に配置されることを確認
+#[test]
+fn test_excel_file_tree_status_column_position_two_way() {
+    use calamine::{Reader, open_workbook, Xlsx};
+
+    let repo = TestRepo::new();
+
+    // 初期コミット
+    repo.create_file("root.txt", "root content");
+    repo.add_all();
+    let commit1 = repo.commit("initial");
+
+    // ネストしたディレクトリ構造を作成（深度3: src/lib/utils.rs）
+    repo.create_file("src/lib/utils.rs", "pub fn util() {}");
+    repo.add_all();
+    let commit2 = repo.commit("add nested files");
+
+    let excel_path = repo.temp_dir.path().join("report.xlsx");
+    let output = repo.run_cmd(&[
+        "-S", &commit1,
+        "-T", &commit2,
+        "-E", excel_path.to_str().unwrap(),
+    ]);
+    assert!(output.status.success(), "Command failed: {:?}", output);
+
+    let mut workbook: Xlsx<_> = open_workbook(&excel_path).expect("Failed to open Excel file");
+
+    if let Ok(file_tree_sheet) = workbook.worksheet_range("File Tree") {
+        // ヘッダー行からStatus列の位置を特定
+        let headers: Vec<String> = file_tree_sheet.rows()
+            .next()
+            .map(|row| row.iter().map(|c| c.to_string()).collect())
+            .unwrap_or_default();
+
+        let status_col_idx = headers.iter().position(|h| h == "Status")
+            .expect("Status header should exist");
+
+        // 最大深度を計算（src/lib/utils.rsは深度2: src=0, lib=1, utils.rs=2）
+        // ただし、ディレクトリ自体も別行にあるので、最大深度はutils.rsの位置
+        // Status列は max_depth + 1 の位置にあるはず
+
+        // utils.rsを含む行を探す
+        for row in file_tree_sheet.rows().skip(1) {
+            let cells: Vec<String> = row.iter().map(|c| c.to_string()).collect();
+
+            if cells.contains(&"utils.rs".to_string()) {
+                let utils_idx = cells.iter().position(|c| c == "utils.rs").unwrap();
+                let status_value = &cells[status_col_idx];
+
+                // Status列がutils.rsの位置よりも後ろにあることを確認
+                assert!(status_col_idx > utils_idx,
+                    "Status column ({}) should be after file name column ({}). Headers: {:?}, Cells: {:?}",
+                    status_col_idx, utils_idx, headers, cells);
+
+                // Status値がファイル名ではなく状態を示すことを確認（大文字小文字区別なし）
+                let status_lower = status_value.to_lowercase();
+                assert!(status_lower == "added" || status_lower == "modified" ||
+                        status_lower == "deleted" || status_lower == "" || status_lower == "renamed",
+                    "Status column should contain status value, not file name. Got: '{}'. Row: {:?}",
+                    status_value, cells);
+            }
+        }
+    } else {
+        panic!("Failed to get File Tree sheet");
+    }
+}
+
+/// EXCEL-TREE-004: FileTreeシートのStatus列位置検証（三者間比較）
+/// Status列はパスコンポーネントの後ろ（max_depth + 1）に配置されることを確認
+#[test]
+fn test_excel_file_tree_status_column_position_three_way() {
+    use calamine::{Reader, open_workbook, Xlsx};
+
+    let repo = TestRepo::new();
+
+    // ベース
+    repo.create_file("base.txt", "base");
+    repo.add_all();
+    let base = repo.commit("base");
+
+    // ours - 深いディレクトリ構造を作成
+    repo.create_branch("ours");
+    repo.checkout("ours");
+    repo.create_file("src/feature/deep/new_feature.rs", "// new feature");
+    repo.add_all();
+    let ours = repo.commit("ours");
+
+    // theirs
+    repo.checkout(&base);
+    repo.create_branch("theirs");
+    repo.checkout("theirs");
+    repo.create_file("src/feature/another.rs", "// another");
+    repo.add_all();
+    let theirs = repo.commit("theirs");
+
+    let excel_path = repo.temp_dir.path().join("report.xlsx");
+    let output = repo.run_cmd(&[
+        "--three-way",
+        "-S", &ours,
+        "-T", &theirs,
+        "-B", &base,
+        "-E", excel_path.to_str().unwrap(),
+    ]);
+    assert!(output.status.success(), "Command failed: {:?}", output);
+
+    let mut workbook: Xlsx<_> = open_workbook(&excel_path).expect("Failed to open Excel file");
+
+    if let Ok(file_tree_sheet) = workbook.worksheet_range("File Tree") {
+        // ヘッダー行からStatus列の位置を特定
+        let headers: Vec<String> = file_tree_sheet.rows()
+            .next()
+            .map(|row| row.iter().map(|c| c.to_string()).collect())
+            .unwrap_or_default();
+
+        let status_col_idx = headers.iter().position(|h| h == "Status")
+            .expect("Status header should exist");
+
+        // 各データ行でファイル名とStatus列が重なっていないことを確認
+        for row in file_tree_sheet.rows().skip(1) {
+            let cells: Vec<String> = row.iter().map(|c| c.to_string()).collect();
+
+            // ファイル名を含む行を探す
+            if cells.iter().any(|c| c.ends_with(".rs")) {
+                let file_idx = cells.iter().position(|c| c.ends_with(".rs")).unwrap();
+                let status_value = &cells[status_col_idx];
+
+                // Status列がファイル名の位置よりも後ろにあることを確認
+                assert!(status_col_idx > file_idx,
+                    "Status column ({}) should be after file name column ({}). Headers: {:?}, Cells: {:?}",
+                    status_col_idx, file_idx, headers, cells);
+
+                // Status値がファイル名ではなく状態を示すことを確認（三者間比較の場合）
+                // ステータス値はハイフン区切りで小文字の場合がある
+                let status_lower = status_value.to_lowercase();
+                let valid_patterns = ["added", "modified", "deleted", "renamed", "unchanged",
+                                     "ours", "theirs", "both", "conflict", ""];
+                let is_valid_status = valid_patterns.iter().any(|p| {
+                    status_lower == *p || status_lower.contains(p)
+                });
+                assert!(is_valid_status,
+                    "Status column should contain valid status value, not file name. Got: '{}'. Row: {:?}",
+                    status_value, cells);
+            }
+        }
+    } else {
+        panic!("Failed to get File Tree sheet");
+    }
+}
+
 // ============================================================================
 // Excelファイル グルーピング機能テスト
 // ============================================================================
