@@ -82,6 +82,18 @@ cargo test --test integration_tests -- --test-threads=1 2>&1 | tee test_output.t
 
 ---
 
+### 3.1 三者間比較ファイル出力形式テスト
+
+| テストID | テスト名 | テスト内容 | 期待結果 | 分類 |
+|---------|---------|-----------|---------|------|
+| THREE-COPY-001 | test_three_way_copy_output_format_status_suffix | ファイル出力形式のステータスサフィックス | `file.txt.added-ours`, `file.txt.added-theirs`形式で出力 | 正常系 |
+| THREE-COPY-002 | test_three_way_copy_output_ours_theirs_only | OursOnly/TheirsOnlyステータスの出力形式 | `file.txt.ours-only`形式で出力 | 正常系 |
+| THREE-COPY-003 | test_three_way_copy_output_both_same | BothSameステータスの出力形式 | `file.txt.both-same`形式で出力 | 正常系 |
+| THREE-COPY-004 | test_three_way_copy_output_conflict | Conflictステータスの出力形式 | `file.txt.conflict.base`, `.conflict.ours`, `.conflict.theirs`形式で出力 | 正常系 |
+| THREE-COPY-005 | test_three_way_copy_output_nested_directory | ネストされたディレクトリでの出力形式 | ディレクトリ構造を保持しステータスサフィックス付きで出力 | 正常系 |
+
+---
+
 ### 4. オプションテスト
 
 | テストID | テスト名 | テスト内容 | 期待結果 | 分類 |
@@ -478,3 +490,4 @@ cargo test --test integration_tests 2>&1 | tee test_output.txt
 | 2026-01-21 | 1.3 | 三者間グループキーワードテスト (GRP-001〜006)、三者間File Tree整列テスト (ALIGN-001〜003) を追加 |
 | 2026-01-22 | 1.4 | ExcelファイルTree ディレクトリ分割形式テスト (EXCEL-TREE-001〜002)、Excelファイル グルーピング機能テスト (EXCEL-GROUP-001〜003) を追加 |
 | 2026-01-22 | 1.5 | ExcelファイルTree Status列位置検証テスト (EXCEL-TREE-003〜004) を追加：Status列がパスコンポーネントと重ならないことを検証 |
+| 2026-01-22 | 1.6 | 三者間比較ファイル出力形式テスト (THREE-COPY-001〜005) を追加：ステータスサフィックス形式のファイル出力検証 |

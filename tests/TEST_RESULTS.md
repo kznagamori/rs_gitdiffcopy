@@ -14,9 +14,9 @@
 
 | カテゴリ | テスト数 | PASS | FAIL | スキップ |
 |---------|---------|------|------|---------|
-| ユニットテスト | 148 | 148 | 0 | 0 |
-| 結合テスト | 151 | 151 | 0 | 0 |
-| **合計** | **299** | **299** | **0** | **0** |
+| ユニットテスト | 159 | 159 | 0 | 0 |
+| 結合テスト | 156 | 156 | 0 | 0 |
+| **合計** | **315** | **315** | **0** | **0** |
 
 ---
 
@@ -56,6 +56,16 @@
 | THREE-002 | test_three_way_conflict | PASS | |
 | THREE-003 | test_three_way_both_same_change | PASS | |
 | THREE-004 | test_three_way_requires_base | PASS | |
+
+### 3.1 三者間比較ファイル出力形式テスト (5テスト)
+
+| テストID | テスト名 | 結果 | 備考 |
+|---------|---------|------|------|
+| THREE-COPY-001 | test_three_way_copy_output_format_status_suffix | PASS | ステータスサフィックス形式 |
+| THREE-COPY-002 | test_three_way_copy_output_ours_theirs_only | PASS | OursOnly/TheirsOnlyサフィックス |
+| THREE-COPY-003 | test_three_way_copy_output_both_same | PASS | BothSameサフィックス |
+| THREE-COPY-004 | test_three_way_copy_output_conflict | PASS | Conflictサフィックス（base, ours, theirs） |
+| THREE-COPY-005 | test_three_way_copy_output_nested_directory | PASS | ネストされたディレクトリ |
 
 ### 4. オプションテスト (17テスト)
 
@@ -509,6 +519,7 @@
 | 2026-01-21 | 23:50 | 134/134 | 144/144 | ALL PASSED | 三者間グループキーワード機能追加、Unit+結合テスト追加（29件追加） |
 | 2026-01-22 | 00:30 | 148/148 | 149/149 | ALL PASSED | Excel行グルーピング機能、FileTree分割テスト追加（19件追加） |
 | 2026-01-22 | 01:00 | 148/148 | 151/151 | ALL PASSED | Status列位置検証テスト追加（2件追加）、status_col修正対応 |
+| 2026-01-22 | 01:30 | 159/159 | 156/156 | ALL PASSED | 三者間コピー出力形式修正（Unit+11件、結合+5件）、ステータスサフィックス形式対応 |
 
 ---
 
@@ -562,3 +573,4 @@ cargo test 2>&1 | tee test_output.txt
 | 2026-01-22 | summary.rs のdisplay_width関数でBox Drawing文字を幅2として計算するよう修正 |
 | 2026-01-22 | Cargo.toml の rust_xlsxwriter を0.92に更新（group_rows API対応） |
 | 2026-01-22 | excel.rs のwrite_file_tree_sheet, write_three_way_file_tree_sheetでstatus_col計算を修正（max_depth + 1）|
+| 2026-01-22 | copy.rs の三者間コピー処理をステータスサフィックス形式に変更（ステータス別ディレクトリからフラット構造へ） |

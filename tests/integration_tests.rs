@@ -615,6 +615,191 @@ fn test_three_way_requires_base() {
     assert!(!output.status.success(), "Should fail without --base");
 }
 
+/// THREE-COPY-001: 三者間比較のファイル出力形式（ステータスサフィックス）
+/// ファイル名にステータスをサフィックスとして追加することを確認
+#[test]
+fn test_three_way_copy_output_format_status_suffix() {
+    let repo = TestRepo::new();
+
+    // baseコミット
+    repo.create_file("base.txt", "base content");
+    repo.add_all();
+    let base = repo.commit("Base commit");
+
+    // oursブランチ: 新規ファイルを追加
+    repo.create_branch("ours");
+    repo.checkout("ours");
+    repo.create_file("ours_only.txt", "ours only content");
+    repo.add_all();
+    let ours = repo.commit("Ours commit");
+
+    // theirsブランチ: 別の新規ファイルを追加
+    repo.checkout(&base);
+    repo.create_branch("theirs");
+    repo.checkout("theirs");
+    repo.create_file("theirs_only.txt", "theirs only content");
+    repo.add_all();
+    let theirs = repo.commit("Theirs commit");
+
+    let output = repo.run_cmd(&["-3", "-B", &base, "-S", &ours, "-T", &theirs]);
+    assert!(output.status.success() || output.status.code() == Some(0), "Command failed: {:?}", output);
+
+    // ステータスサフィックスが付与されたファイルが存在することを確認
+    assert!(repo.output_exists("ours_only.txt.added-ours"),
+            "ours_only.txt.added-ours should exist");
+    assert!(repo.output_exists("theirs_only.txt.added-theirs"),
+            "theirs_only.txt.added-theirs should exist");
+
+    // ファイル内容を確認
+    assert_eq!(repo.read_output("ours_only.txt.added-ours"), "ours only content");
+    assert_eq!(repo.read_output("theirs_only.txt.added-theirs"), "theirs only content");
+}
+
+/// THREE-COPY-002: 三者間比較のOursOnly/TheirsOnlyステータスの出力形式
+#[test]
+fn test_three_way_copy_output_ours_theirs_only() {
+    let repo = TestRepo::new();
+
+    // baseコミット
+    repo.create_file("base.txt", "base content");
+    repo.add_all();
+    let base = repo.commit("Base commit");
+
+    // oursで既存ファイルを変更
+    repo.create_branch("ours");
+    repo.checkout("ours");
+    repo.create_file("base.txt", "ours modified");
+    repo.add_all();
+    let ours = repo.commit("Ours modify");
+
+    // theirsでは変更なし
+    repo.checkout(&base);
+    repo.create_branch("theirs");
+    repo.checkout("theirs");
+    // 何も変更しない
+    let theirs = repo.commit("Theirs no change");
+
+    let output = repo.run_cmd(&["-3", "-B", &base, "-S", &ours, "-T", &theirs]);
+    assert!(output.status.success() || output.status.code() == Some(0), "Command failed: {:?}", output);
+
+    // OursOnlyの場合のサフィックス
+    assert!(repo.output_exists("base.txt.ours-only"),
+            "base.txt.ours-only should exist");
+    assert_eq!(repo.read_output("base.txt.ours-only"), "ours modified");
+}
+
+/// THREE-COPY-003: 三者間比較のBothSameステータスの出力形式
+#[test]
+fn test_three_way_copy_output_both_same() {
+    let repo = TestRepo::new();
+
+    // baseコミット
+    repo.create_file("same.txt", "base content");
+    repo.add_all();
+    let base = repo.commit("Base commit");
+
+    // oursで変更
+    repo.create_branch("ours");
+    repo.checkout("ours");
+    repo.create_file("same.txt", "same modification");
+    repo.add_all();
+    let ours = repo.commit("Ours modification");
+
+    // theirsで同じ変更
+    repo.checkout(&base);
+    repo.create_branch("theirs");
+    repo.checkout("theirs");
+    repo.create_file("same.txt", "same modification");
+    repo.add_all();
+    let theirs = repo.commit("Theirs modification");
+
+    let output = repo.run_cmd(&["-3", "-B", &base, "-S", &ours, "-T", &theirs]);
+    assert!(output.status.success() || output.status.code() == Some(0), "Command failed: {:?}", output);
+
+    // BothSameの場合のサフィックス
+    assert!(repo.output_exists("same.txt.both-same"),
+            "same.txt.both-same should exist");
+    assert_eq!(repo.read_output("same.txt.both-same"), "same modification");
+}
+
+/// THREE-COPY-004: 三者間比較のConflictステータスの出力形式
+#[test]
+fn test_three_way_copy_output_conflict() {
+    let repo = TestRepo::new();
+
+    // baseコミット
+    repo.create_file("conflict.txt", "base content");
+    repo.add_all();
+    let base = repo.commit("Base commit");
+
+    // oursで変更
+    repo.create_branch("ours");
+    repo.checkout("ours");
+    repo.create_file("conflict.txt", "ours modification");
+    repo.add_all();
+    let ours = repo.commit("Ours modification");
+
+    // theirsで異なる変更
+    repo.checkout(&base);
+    repo.create_branch("theirs");
+    repo.checkout("theirs");
+    repo.create_file("conflict.txt", "theirs modification");
+    repo.add_all();
+    let theirs = repo.commit("Theirs modification");
+
+    let output = repo.run_cmd(&["-3", "-B", &base, "-S", &ours, "-T", &theirs]);
+    // コンフリクトがある場合は終了コード3
+    assert_eq!(output.status.code(), Some(3), "Exit code should be 3 for conflicts");
+
+    // Conflictの場合は base, ours, theirs の3バージョンがサフィックス付きで出力
+    assert!(repo.output_exists("conflict.txt.conflict.base"),
+            "conflict.txt.conflict.base should exist");
+    assert!(repo.output_exists("conflict.txt.conflict.ours"),
+            "conflict.txt.conflict.ours should exist");
+    assert!(repo.output_exists("conflict.txt.conflict.theirs"),
+            "conflict.txt.conflict.theirs should exist");
+
+    // 内容を確認
+    assert_eq!(repo.read_output("conflict.txt.conflict.base"), "base content");
+    assert_eq!(repo.read_output("conflict.txt.conflict.ours"), "ours modification");
+    assert_eq!(repo.read_output("conflict.txt.conflict.theirs"), "theirs modification");
+}
+
+/// THREE-COPY-005: 三者間比較のネストされたディレクトリでの出力形式
+#[test]
+fn test_three_way_copy_output_nested_directory() {
+    let repo = TestRepo::new();
+
+    // baseコミット
+    repo.create_file("src/lib/base.rs", "base");
+    repo.add_all();
+    let base = repo.commit("Base commit");
+
+    // oursで新規ファイル追加
+    repo.create_branch("ours");
+    repo.checkout("ours");
+    repo.create_file("src/lib/feature/ours.rs", "ours feature");
+    repo.add_all();
+    let ours = repo.commit("Ours feature");
+
+    // theirsで別の新規ファイル追加
+    repo.checkout(&base);
+    repo.create_branch("theirs");
+    repo.checkout("theirs");
+    repo.create_file("src/lib/feature/theirs.rs", "theirs feature");
+    repo.add_all();
+    let theirs = repo.commit("Theirs feature");
+
+    let output = repo.run_cmd(&["-3", "-B", &base, "-S", &ours, "-T", &theirs]);
+    assert!(output.status.success() || output.status.code() == Some(0), "Command failed: {:?}", output);
+
+    // ネストされたパスでもステータスサフィックスが正しく付与されることを確認
+    assert!(repo.output_exists("src/lib/feature/ours.rs.added-ours"),
+            "src/lib/feature/ours.rs.added-ours should exist");
+    assert!(repo.output_exists("src/lib/feature/theirs.rs.added-theirs"),
+            "src/lib/feature/theirs.rs.added-theirs should exist");
+}
+
 // ============================================================================
 // 4. オプションテスト
 // ============================================================================

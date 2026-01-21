@@ -266,15 +266,7 @@ impl<'a> FileCopier<'a> {
         }
 
         // 出力ディレクトリを作成
-        let ours_only_dir = self.config.output.join("ours_only");
-        let theirs_only_dir = self.config.output.join("theirs_only");
-        let both_same_dir = self.config.output.join("both_same");
-        let conflicts_dir = self.config.output.join("conflicts");
-
-        fs::create_dir_all(&ours_only_dir)?;
-        fs::create_dir_all(&theirs_only_dir)?;
-        fs::create_dir_all(&both_same_dir)?;
-        fs::create_dir_all(&conflicts_dir)?;
+        fs::create_dir_all(&self.config.output)?;
 
         let pb = ProgressBar::new(files.len() as u64);
         pb.set_style(
@@ -299,10 +291,6 @@ impl<'a> FileCopier<'a> {
                 base_commit,
                 ours_commit,
                 theirs_commit,
-                &ours_only_dir,
-                &theirs_only_dir,
-                &both_same_dir,
-                &conflicts_dir,
             );
             pb.inc(1);
 
@@ -333,66 +321,82 @@ impl<'a> FileCopier<'a> {
         base_commit: &str,
         ours_commit: &str,
         theirs_commit: &str,
-        ours_only_dir: &Path,
-        theirs_only_dir: &Path,
-        both_same_dir: &Path,
-        conflicts_dir: &Path,
     ) -> Result<bool> {
         // conflict_onlyの場合、コンフリクト以外はスキップ
         if self.config.conflict_only && !file.status.is_conflict() {
             return Ok(false);
         }
 
+        let base_output_path = self.config.output.join(&file.path);
+
         match file.status {
             ThreeWayStatus::Unchanged => Ok(false),
             ThreeWayStatus::OursOnly => {
-                let output_path = ours_only_dir.join(&file.path);
+                let output_path = Self::add_extension(&base_output_path, "ours-only");
                 self.ensure_parent(&output_path)?;
                 let content = self.git.show(ours_commit, &file.path)?;
                 fs::write(&output_path, &content)?;
                 Ok(true)
             }
             ThreeWayStatus::TheirsOnly => {
-                let output_path = theirs_only_dir.join(&file.path);
+                let output_path = Self::add_extension(&base_output_path, "theirs-only");
                 self.ensure_parent(&output_path)?;
                 let content = self.git.show(theirs_commit, &file.path)?;
                 fs::write(&output_path, &content)?;
                 Ok(true)
             }
             ThreeWayStatus::BothSame => {
-                let output_path = both_same_dir.join(&file.path);
+                let output_path = Self::add_extension(&base_output_path, "both-same");
                 self.ensure_parent(&output_path)?;
                 let content = self.git.show(ours_commit, &file.path)?;
                 fs::write(&output_path, &content)?;
                 Ok(true)
             }
             status if status.is_conflict() => {
-                self.copy_conflict_file(file, base_commit, ours_commit, theirs_commit, conflicts_dir)
+                self.copy_conflict_file(file, base_commit, ours_commit, theirs_commit, &base_output_path)
             }
             ThreeWayStatus::AddedOurs => {
-                let output_path = ours_only_dir.join(&file.path);
+                let output_path = Self::add_extension(&base_output_path, "added-ours");
                 self.ensure_parent(&output_path)?;
                 let content = self.git.show(ours_commit, &file.path)?;
                 fs::write(&output_path, &content)?;
                 Ok(true)
             }
             ThreeWayStatus::AddedTheirs => {
-                let output_path = theirs_only_dir.join(&file.path);
+                let output_path = Self::add_extension(&base_output_path, "added-theirs");
                 self.ensure_parent(&output_path)?;
                 let content = self.git.show(theirs_commit, &file.path)?;
                 fs::write(&output_path, &content)?;
                 Ok(true)
             }
             ThreeWayStatus::AddedBothSame => {
-                let output_path = both_same_dir.join(&file.path);
+                let output_path = Self::add_extension(&base_output_path, "added-both-same");
                 self.ensure_parent(&output_path)?;
                 let content = self.git.show(ours_commit, &file.path)?;
                 fs::write(&output_path, &content)?;
                 Ok(true)
             }
-            ThreeWayStatus::DeletedOurs | ThreeWayStatus::DeletedTheirs | ThreeWayStatus::DeletedBoth => {
-                // 削除されたファイルはコピーしない
-                Ok(false)
+            ThreeWayStatus::DeletedOurs => {
+                // 削除されたファイルは削除前のバージョン（base）をコピー
+                let output_path = Self::add_extension(&base_output_path, "deleted-ours");
+                self.ensure_parent(&output_path)?;
+                let content = self.git.show(base_commit, &file.path)?;
+                fs::write(&output_path, &content)?;
+                Ok(true)
+            }
+            ThreeWayStatus::DeletedTheirs => {
+                let output_path = Self::add_extension(&base_output_path, "deleted-theirs");
+                self.ensure_parent(&output_path)?;
+                let content = self.git.show(base_commit, &file.path)?;
+                fs::write(&output_path, &content)?;
+                Ok(true)
+            }
+            ThreeWayStatus::DeletedBoth => {
+                let output_path = Self::add_extension(&base_output_path, "deleted-both");
+                self.ensure_parent(&output_path)?;
+                let content = self.git.show(base_commit, &file.path)?;
+                fs::write(&output_path, &content)?;
+                Ok(true)
             }
             _ => Ok(false),
         }
@@ -405,49 +409,62 @@ impl<'a> FileCopier<'a> {
         base_commit: &str,
         ours_commit: &str,
         theirs_commit: &str,
-        conflicts_dir: &Path,
+        base_output_path: &Path,
     ) -> Result<bool> {
-        let base_path = conflicts_dir.join(&file.path);
-        self.ensure_parent(&base_path)?;
+        self.ensure_parent(base_output_path)?;
+
+        // コンフリクトタイプに応じたサフィックスを決定
+        let conflict_suffix = Self::get_conflict_suffix(file.status);
 
         match self.config.merge_style {
             MergeStyle::All => {
                 // base, ours, theirs 全てを出力
                 if file.base_blob.is_some() {
                     let content = self.git.show(base_commit, &file.path)?;
-                    let dest = Self::add_extension(&base_path, "base");
+                    let dest = Self::add_extension(base_output_path, &format!("{}.base", conflict_suffix));
                     fs::write(&dest, &content)?;
                 }
 
                 if file.ours_blob.is_some() {
                     let content = self.git.show(ours_commit, &file.path)?;
-                    let dest = Self::add_extension(&base_path, "ours");
+                    let dest = Self::add_extension(base_output_path, &format!("{}.ours", conflict_suffix));
                     fs::write(&dest, &content)?;
                 }
 
                 if file.theirs_blob.is_some() {
                     let content = self.git.show(theirs_commit, &file.path)?;
-                    let dest = Self::add_extension(&base_path, "theirs");
+                    let dest = Self::add_extension(base_output_path, &format!("{}.theirs", conflict_suffix));
                     fs::write(&dest, &content)?;
                 }
             }
             MergeStyle::Ours => {
                 if file.ours_blob.is_some() {
                     let content = self.git.show(ours_commit, &file.path)?;
-                    let dest = Self::add_extension(&base_path, "ours");
+                    let dest = Self::add_extension(base_output_path, &format!("{}.ours", conflict_suffix));
                     fs::write(&dest, &content)?;
                 }
             }
             MergeStyle::Theirs => {
                 if file.theirs_blob.is_some() {
                     let content = self.git.show(theirs_commit, &file.path)?;
-                    let dest = Self::add_extension(&base_path, "theirs");
+                    let dest = Self::add_extension(base_output_path, &format!("{}.theirs", conflict_suffix));
                     fs::write(&dest, &content)?;
                 }
             }
         }
 
         Ok(true)
+    }
+
+    /// コンフリクトステータスに応じたサフィックスを取得
+    fn get_conflict_suffix(status: ThreeWayStatus) -> &'static str {
+        match status {
+            ThreeWayStatus::Conflict => "conflict",
+            ThreeWayStatus::AddedBothDiff => "added-both-diff",
+            ThreeWayStatus::ModifyDelete => "modify-delete",
+            ThreeWayStatus::DeleteModify => "delete-modify",
+            _ => "conflict",
+        }
     }
 
     /// 親ディレクトリを作成
@@ -577,5 +594,76 @@ mod tests {
         assert!(!ThreeWayStatus::DeletedOurs.is_conflict());
         assert!(!ThreeWayStatus::DeletedTheirs.is_conflict());
         assert!(!ThreeWayStatus::DeletedBoth.is_conflict());
+    }
+
+    // get_conflict_suffix のテスト
+    #[test]
+    fn test_get_conflict_suffix_conflict() {
+        assert_eq!(FileCopier::get_conflict_suffix(ThreeWayStatus::Conflict), "conflict");
+    }
+
+    #[test]
+    fn test_get_conflict_suffix_added_both_diff() {
+        assert_eq!(FileCopier::get_conflict_suffix(ThreeWayStatus::AddedBothDiff), "added-both-diff");
+    }
+
+    #[test]
+    fn test_get_conflict_suffix_modify_delete() {
+        assert_eq!(FileCopier::get_conflict_suffix(ThreeWayStatus::ModifyDelete), "modify-delete");
+    }
+
+    #[test]
+    fn test_get_conflict_suffix_delete_modify() {
+        assert_eq!(FileCopier::get_conflict_suffix(ThreeWayStatus::DeleteModify), "delete-modify");
+    }
+
+    // 三者間比較のファイル名サフィックスのテスト
+    #[test]
+    fn test_add_extension_ours_only() {
+        let path = Path::new("src/lib/utils.rs");
+        let result = FileCopier::add_extension(path, "ours-only");
+        assert_eq!(result, PathBuf::from("src/lib/utils.rs.ours-only"));
+    }
+
+    #[test]
+    fn test_add_extension_theirs_only() {
+        let path = Path::new("src/lib/utils.rs");
+        let result = FileCopier::add_extension(path, "theirs-only");
+        assert_eq!(result, PathBuf::from("src/lib/utils.rs.theirs-only"));
+    }
+
+    #[test]
+    fn test_add_extension_both_same() {
+        let path = Path::new("src/lib/utils.rs");
+        let result = FileCopier::add_extension(path, "both-same");
+        assert_eq!(result, PathBuf::from("src/lib/utils.rs.both-same"));
+    }
+
+    #[test]
+    fn test_add_extension_added_theirs() {
+        let path = Path::new("src/lib/utils.rs");
+        let result = FileCopier::add_extension(path, "added-theirs");
+        assert_eq!(result, PathBuf::from("src/lib/utils.rs.added-theirs"));
+    }
+
+    #[test]
+    fn test_add_extension_conflict_base() {
+        let path = Path::new("src/main.rs");
+        let result = FileCopier::add_extension(path, "conflict.base");
+        assert_eq!(result, PathBuf::from("src/main.rs.conflict.base"));
+    }
+
+    #[test]
+    fn test_add_extension_conflict_ours() {
+        let path = Path::new("src/main.rs");
+        let result = FileCopier::add_extension(path, "conflict.ours");
+        assert_eq!(result, PathBuf::from("src/main.rs.conflict.ours"));
+    }
+
+    #[test]
+    fn test_add_extension_conflict_theirs() {
+        let path = Path::new("src/main.rs");
+        let result = FileCopier::add_extension(path, "conflict.theirs");
+        assert_eq!(result, PathBuf::from("src/main.rs.conflict.theirs"));
     }
 }
