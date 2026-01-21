@@ -18,7 +18,7 @@ serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 
 # Excel出力
-rust_xlsxwriter = "0.80"
+rust_xlsxwriter = "0.92"
 
 # 並列処理
 rayon = "1.10"

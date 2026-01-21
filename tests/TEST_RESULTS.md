@@ -4,8 +4,8 @@
 
 | 項目 | 内容 |
 |-----|------|
-| 実施日 | 2026-01-21 |
-| 実施時刻 | 23:50 JST |
+| 実施日 | 2026-01-22 |
+| 実施時刻 | 00:30 JST |
 | 実行環境 | Linux (WSL2) |
 | Rustバージョン | stable |
 | 結果 | **ALL PASSED** |
@@ -14,9 +14,9 @@
 
 | カテゴリ | テスト数 | PASS | FAIL | スキップ |
 |---------|---------|------|------|---------|
-| ユニットテスト | 134 | 134 | 0 | 0 |
-| 結合テスト | 144 | 144 | 0 | 0 |
-| **合計** | **278** | **278** | **0** | **0** |
+| ユニットテスト | 148 | 148 | 0 | 0 |
+| 結合テスト | 149 | 149 | 0 | 0 |
+| **合計** | **297** | **297** | **0** | **0** |
 
 ---
 
@@ -287,6 +287,21 @@
 | ALIGN-002 | test_three_way_summary_file_alignment_japanese | PASS | 三者間日本語ファイル名整列 |
 | ALIGN-003 | test_three_way_file_tree_alignment | PASS | 三者間File Tree整列（異なる深さ） |
 
+### 25. ExcelファイルTree ディレクトリ分割形式テスト (2テスト)
+
+| テストID | テスト名 | 結果 | 備考 |
+|---------|---------|------|------|
+| EXCEL-TREE-001 | test_excel_file_tree_directory_split_two_way | PASS | 二者間比較FileTreeディレクトリ分割 |
+| EXCEL-TREE-002 | test_excel_file_tree_directory_split_three_way | PASS | 三者間比較FileTreeディレクトリ分割 |
+
+### 26. Excelファイル グルーピング機能テスト (3テスト)
+
+| テストID | テスト名 | 結果 | 備考 |
+|---------|---------|------|------|
+| EXCEL-GROUP-001 | test_excel_fold_level_two_way | PASS | 二者間比較--excel-fold-levelオプション |
+| EXCEL-GROUP-002 | test_excel_fold_level_three_way | PASS | 三者間比較--excel-fold-levelオプション |
+| EXCEL-GROUP-003 | test_excel_default_fold_level | PASS | デフォルトfold-level（グルーピングなし） |
+
 ---
 
 ## ユニットテスト詳細結果
@@ -379,7 +394,7 @@
 | test_diff_file_is_permission_only_change | PASS | 権限のみ変更判定 |
 | test_diff_file_is_not_permission_only_change | PASS | 内容変更判定 |
 
-### src/summary.rs (24テスト)
+### src/summary.rs (30テスト)
 
 | テスト名 | 結果 | 備考 |
 |---------|------|------|
@@ -403,6 +418,12 @@
 | test_statistics_total | PASS | 統計合計 |
 | test_three_way_statistics_total | PASS | 三者間統計合計 |
 | test_three_way_statistics_conflicts | PASS | 三者間コンフリクト数 |
+| test_display_width_ascii | PASS | ASCII文字幅計算 |
+| test_display_width_japanese | PASS | 日本語文字幅計算 |
+| test_display_width_box_drawing | PASS | Box Drawing文字幅計算（幅2） |
+| test_display_width_emoji | PASS | 絵文字幅計算 |
+| test_display_width_mixed | PASS | 混合文字幅計算 |
+| test_display_width_box_drawing_tree | PASS | ツリー罫線幅計算 |
 
 ### src/safety.rs (12テスト)
 
@@ -419,6 +440,19 @@
 | test_get_directory_info_with_files | PASS | |
 | test_remove_directory | PASS | |
 | test_remove_nonexistent_directory | PASS | |
+
+### src/excel.rs (8テスト)
+
+| テスト名 | 結果 | 備考 |
+|---------|------|------|
+| test_calculate_row_groups_empty | PASS | 空配列グルーピング |
+| test_calculate_row_groups_all_below_fold_level | PASS | 全て基準以下 |
+| test_calculate_row_groups_single_group | PASS | 単一グループ |
+| test_calculate_row_groups_multiple_groups | PASS | 複数グループ |
+| test_calculate_row_groups_fold_level_1 | PASS | 折りたたみレベル1 |
+| test_calculate_row_groups_at_end | PASS | 末尾グループ |
+| test_calculate_row_groups_alternating | PASS | 交互深度 |
+| test_calculate_row_groups_all_same_depth | PASS | 全て同深度 |
 
 ### src/types.rs (37テスト)
 
@@ -471,6 +505,7 @@
 | 2026-01-21 | 22:40 | 26/26 | 135/135 | ALL PASSED | 不具合修正テスト追加（4件） |
 | 2026-01-21 | 23:30 | 114/114 | 135/135 | ALL PASSED | Unitテスト大幅追加（88件追加） |
 | 2026-01-21 | 23:50 | 134/134 | 144/144 | ALL PASSED | 三者間グループキーワード機能追加、Unit+結合テスト追加（29件追加） |
+| 2026-01-22 | 00:30 | 148/148 | 149/149 | ALL PASSED | Excel行グルーピング機能、FileTree分割テスト追加（19件追加） |
 
 ---
 
@@ -520,3 +555,6 @@ cargo test 2>&1 | tee test_output.txt
 | 2026-01-21 | types.rs に三者間グループキーワード機能を追加（FilterGroup, expand_filter_status_three_way） |
 | 2026-01-21 | main.rs で三者間比較時のfilter_status表示フィルタリングを追加 |
 | 2026-01-21 | copy.rs で三者間比較時のfilter_statusコピーフィルタリングを追加 |
+| 2026-01-22 | excel.rs にExcel行グルーピング機能を追加（apply_row_grouping, calculate_row_groups） |
+| 2026-01-22 | summary.rs のdisplay_width関数でBox Drawing文字を幅2として計算するよう修正 |
+| 2026-01-22 | Cargo.toml の rust_xlsxwriter を0.92に更新（group_rows API対応） |

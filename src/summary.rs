@@ -10,7 +10,22 @@ use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{self, Write};
 use std::path::Path;
-use unicode_width::UnicodeWidthStr;
+use unicode_width::UnicodeWidthChar;
+
+/// Box Drawing文字を幅2として扱う表示幅計算
+///
+/// unicode_widthクレートはBox Drawing文字(U+2500-U+257F)を幅1として返すが、
+/// CJK/日本語端末ではこれらの文字は幅2で表示されるため、補正が必要
+fn display_width(s: &str) -> usize {
+    s.chars().map(|c| {
+        // Box Drawing文字(U+2500-U+257F)は幅2として扱う
+        if ('\u{2500}'..='\u{257F}').contains(&c) {
+            2
+        } else {
+            UnicodeWidthChar::width(c).unwrap_or(0)
+        }
+    }).sum()
+}
 
 /// サマリー出力
 pub struct SummaryWriter<'a> {
@@ -41,7 +56,7 @@ impl<'a> SummaryWriter<'a> {
         repo_path: &Path,
         copy_errors: &[String],
     ) -> io::Result<()> {
-        // コンソール出力用（カラーあり）
+        // コンソール出力用（カラーあり、コンパクト形式）
         let console_output = self.build_two_way_output(
             files,
             stats,
@@ -52,9 +67,10 @@ impl<'a> SummaryWriter<'a> {
             repo_path,
             copy_errors,
             self.use_color,
+            false, // to_file: false = compact format
         );
 
-        // ファイル出力用（カラーなし）
+        // ファイル出力用（カラーなし、整列形式）
         let file_output = self.build_two_way_output(
             files,
             stats,
@@ -65,6 +81,7 @@ impl<'a> SummaryWriter<'a> {
             repo_path,
             copy_errors,
             false,
+            true, // to_file: true = aligned format
         );
 
         // 出力
@@ -83,6 +100,7 @@ impl<'a> SummaryWriter<'a> {
         repo_path: &Path,
         copy_errors: &[String],
         use_color: bool,
+        to_file: bool, // true: aligned format, false: compact format
     ) -> String {
         let mut output = String::new();
 
@@ -112,7 +130,7 @@ impl<'a> SummaryWriter<'a> {
 
         // ファイルツリー
         if !self.config.no_tree && !self.config.stats_only {
-            self.write_file_tree(&mut output, files, use_color);
+            self.write_file_tree(&mut output, files, use_color, to_file);
         }
 
         // 詳細セクション
@@ -147,7 +165,7 @@ impl<'a> SummaryWriter<'a> {
         repo_path: &Path,
         copy_errors: &[String],
     ) -> io::Result<()> {
-        // コンソール出力用（カラーあり）
+        // コンソール出力用（カラーあり、コンパクト形式）
         let console_output = self.build_three_way_output(
             files,
             stats,
@@ -160,9 +178,10 @@ impl<'a> SummaryWriter<'a> {
             repo_path,
             copy_errors,
             self.use_color,
+            false, // to_file: false = compact format
         );
 
-        // ファイル出力用（カラーなし）
+        // ファイル出力用（カラーなし、整列形式）
         let file_output = self.build_three_way_output(
             files,
             stats,
@@ -175,6 +194,7 @@ impl<'a> SummaryWriter<'a> {
             repo_path,
             copy_errors,
             false,
+            true, // to_file: true = aligned format
         );
 
         // 出力
@@ -195,6 +215,7 @@ impl<'a> SummaryWriter<'a> {
         repo_path: &Path,
         copy_errors: &[String],
         _use_color: bool,
+        to_file: bool, // true: aligned format, false: compact format
     ) -> String {
         let mut output = String::new();
 
@@ -229,7 +250,7 @@ impl<'a> SummaryWriter<'a> {
 
         // ファイルツリー（三者間）
         if !self.config.no_tree && !self.config.stats_only {
-            self.write_three_way_file_tree(&mut output, files);
+            self.write_three_way_file_tree(&mut output, files, to_file);
         }
 
         // コンフリクト詳細
@@ -339,7 +360,8 @@ impl<'a> SummaryWriter<'a> {
     }
 
     /// ファイルツリーを出力
-    fn write_file_tree(&self, output: &mut String, files: &[DiffFile], use_color: bool) {
+    /// to_file: true=整列形式（ファイル出力用）、false=コンパクト形式（コンソール出力用）
+    fn write_file_tree(&self, output: &mut String, files: &[DiffFile], use_color: bool, to_file: bool) {
         output.push_str("\n================\n");
         output.push_str("File Tree\n");
         output.push_str("================\n");
@@ -348,8 +370,12 @@ impl<'a> SummaryWriter<'a> {
         // ファイルをディレクトリ構造に整理
         let tree = self.build_tree(files);
 
-        // 最長幅を計算
-        let max_width = self.calculate_max_tree_width(&tree, "");
+        // ファイル出力時のみ整列のため最長幅を計算
+        let max_width = if to_file {
+            self.calculate_max_tree_width(&tree, "")
+        } else {
+            0 // コンソール出力はコンパクト形式（整列なし）
+        };
 
         self.write_tree_node(output, &tree, "", true, max_width, use_color);
     }
@@ -369,7 +395,7 @@ impl<'a> SummaryWriter<'a> {
                 TreeNode::File(_) => {
                     // prefix + connector + name の表示幅を計算
                     let line = format!("{}{}{}", prefix, connector, name);
-                    let width = UnicodeWidthStr::width(line.as_str());
+                    let width = display_width(&line);
                     if width > max_width {
                         max_width = width;
                     }
@@ -377,7 +403,7 @@ impl<'a> SummaryWriter<'a> {
                 TreeNode::Dir(children) => {
                     // ディレクトリ名も幅計算に含める（"/"を含む）
                     let line = format!("{}{}{}/", prefix, connector, name);
-                    let width = UnicodeWidthStr::width(line.as_str());
+                    let width = display_width(&line);
                     if width > max_width {
                         max_width = width;
                     }
@@ -394,18 +420,45 @@ impl<'a> SummaryWriter<'a> {
     }
 
     /// 三者間ファイルツリーを出力
-    fn write_three_way_file_tree(&self, output: &mut String, files: &[ThreeWayDiffFile]) {
+    /// to_file: true=整列形式（ファイル出力用）、false=コンパクト形式（コンソール出力用）
+    fn write_three_way_file_tree(&self, output: &mut String, files: &[ThreeWayDiffFile], to_file: bool) {
         output.push_str("\n================\n");
         output.push_str("File Tree\n");
         output.push_str("================\n");
         output.push_str("Legend: [Base|Ours|Theirs] ○=exists -=missing ==same M=modified A=added D=deleted\n");
         output.push_str(".\n");
 
-        // 簡略化した出力
-        for file in files {
+        // ファイル出力時のみ整列のため最長幅を計算
+        let max_width = if to_file {
+            files.iter()
+                .map(|f| {
+                    let line = format!("├── {}", f.path.display());
+                    display_width(&line)
+                })
+                .max()
+                .unwrap_or(0)
+        } else {
+            0 // コンソール出力はコンパクト形式（整列なし）
+        };
+
+        let file_count = files.len();
+        for (i, file) in files.iter().enumerate() {
+            let connector = if i == file_count - 1 { "└── " } else { "├── " };
+            let line = format!("{}{}", connector, file.path.display());
             let indicator = file.status.indicator();
             let tag = file.status.tag();
-            output.push_str(&format!("├── {} {} {}\n", file.path.display(), indicator, tag));
+
+            if to_file && max_width > 0 {
+                let current_width = display_width(&line);
+                let padding = if max_width > current_width {
+                    " ".repeat(max_width - current_width)
+                } else {
+                    String::new()
+                };
+                output.push_str(&format!("{}{} {} {}\n", line, padding, indicator, tag));
+            } else {
+                output.push_str(&format!("{} {} {}\n", line, indicator, tag));
+            }
         }
     }
 
@@ -468,7 +521,7 @@ impl<'a> SummaryWriter<'a> {
             match node {
                 TreeNode::File(file) => {
                     let line = format!("{}{}{}", prefix, connector, name);
-                    let current_width = UnicodeWidthStr::width(line.as_str());
+                    let current_width = display_width(&line);
                     let padding = if max_width > current_width {
                         " ".repeat(max_width - current_width)
                     } else {
@@ -975,5 +1028,59 @@ mod tests {
         };
         // conflict + added_both_diff + modify_delete + delete_modify = 3 + 2 + 1 + 1 = 7
         assert_eq!(stats.conflicts(), 7);
+    }
+
+    // display_width のテスト
+    #[test]
+    fn test_display_width_ascii() {
+        // ASCII文字は幅1
+        assert_eq!(display_width("abc"), 3);
+        assert_eq!(display_width("hello world"), 11);
+    }
+
+    #[test]
+    fn test_display_width_japanese() {
+        // 日本語文字は幅2
+        assert_eq!(display_width("日本語"), 6);
+        assert_eq!(display_width("ファイル"), 8);
+    }
+
+    #[test]
+    fn test_display_width_box_drawing() {
+        // Box Drawing文字(U+2500-U+257F)は幅2として計算される
+        // ├ = U+251C, └ = U+2514, │ = U+2502, ─ = U+2500
+        assert_eq!(display_width("├"), 2);
+        assert_eq!(display_width("└"), 2);
+        assert_eq!(display_width("│"), 2);
+        assert_eq!(display_width("─"), 2);
+        assert_eq!(display_width("├──"), 6); // 3文字 x 2 = 6
+        // │(2) + space(1) + space(1) + space(1) + ├(2) + ─(2) + ─(2) = 11
+        assert_eq!(display_width("│   ├──"), 11);
+    }
+
+    #[test]
+    fn test_display_width_mixed() {
+        // ASCII + Box Drawing
+        assert_eq!(display_width("├── file.txt"), 2 + 2 + 2 + 1 + 8); // ├(2) + ─(2) + ─(2) + space(1) + "file.txt"(8) = 15
+        // 日本語 + Box Drawing
+        assert_eq!(display_width("├── 日本語.txt"), 2 + 2 + 2 + 1 + 6 + 4); // ├── + space + 日本語(6) + .txt(4) = 17
+    }
+
+    #[test]
+    fn test_display_width_empty() {
+        assert_eq!(display_width(""), 0);
+    }
+
+    #[test]
+    fn test_display_width_tree_prefix() {
+        // 実際のツリー表示で使われるプレフィックス
+        // "│   " = │(2) + space(1) + space(1) + space(1) = 5
+        assert_eq!(display_width("│   "), 5);
+        // "    " = 4 spaces = 4
+        assert_eq!(display_width("    "), 4);
+        // "├── " = ├(2) + ─(2) + ─(2) + space(1) = 7
+        assert_eq!(display_width("├── "), 7);
+        // "└── " = └(2) + ─(2) + ─(2) + space(1) = 7
+        assert_eq!(display_width("└── "), 7);
     }
 }

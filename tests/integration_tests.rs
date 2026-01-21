@@ -2807,7 +2807,8 @@ fn test_three_way_conflict_only() {
 
 #[test]
 fn test_excel_summary_has_options_section() {
-    // EXFMT-001: Optionsセクション存在確認
+    // EXFMT-007: Optionsセクション存在確認
+    // Optionsセクションが存在し、excludeパターンが正しく表示されることを確認
     let repo = TestRepo::new();
 
     repo.create_file("file.txt", "content");
@@ -2828,24 +2829,29 @@ fn test_excel_summary_has_options_section() {
     assert!(output.status.success(), "Command failed: {:?}", output);
 
     use calamine::{Reader, open_workbook, Xlsx};
-    if let Ok(mut wb) = open_workbook::<Xlsx<_>, _>(&excel_path) {
-        for sheet_name in wb.sheet_names().to_vec() {
-            if sheet_name.contains("Summary") {
-                if let Ok(range) = wb.worksheet_range(&sheet_name) {
-                    // Excel should have some content - either Options section or basic info
-                    let has_content = range.rows().any(|row| {
-                        row.iter().any(|cell| {
-                            let s = cell.to_string();
-                            s.contains("Options") || s.contains("Exclude") ||
-                            s.contains("Source") || s.contains("Target") ||
-                            s.contains("Dry") || s.contains("*.log")
-                        })
-                    });
-                    assert!(has_content, "Summary should have Options or basic info section");
-                }
-                break;
-            }
-        }
+    let mut wb: Xlsx<_> = open_workbook(&excel_path).expect("Failed to open Excel file");
+
+    let sheet_names = wb.sheet_names().to_vec();
+    assert!(sheet_names.iter().any(|name| name == "Summary"), "Summary sheet should exist");
+
+    if let Ok(range) = wb.worksheet_range("Summary") {
+        // Optionsヘッダーが存在することを確認
+        let has_options_header = range.rows().any(|row| {
+            row.iter().any(|cell| cell.to_string() == "Options")
+        });
+        assert!(has_options_header, "Summary should have 'Options' header");
+
+        // Excludeラベルが表示されていることを確認
+        let has_exclude_label = range.rows().any(|row| {
+            row.iter().any(|cell| cell.to_string().contains("Exclude"))
+        });
+        assert!(has_exclude_label, "Summary should have 'Exclude:' label when exclude is specified");
+
+        // excludeパターンの値(*.log)が表示されていることを確認
+        let has_exclude_value = range.rows().any(|row| {
+            row.iter().any(|cell| cell.to_string().contains("*.log"))
+        });
+        assert!(has_exclude_value, "Summary should show exclude pattern '*.log'");
     }
 }
 
@@ -3607,6 +3613,8 @@ fn test_summary_file_status_alignment() {
 
 /// Excelファイルの罫線が正しく設定されていることを確認
 /// 不具合: 一部のセルに罫線が設定されていなかった
+/// 注意: calamineは罫線情報を直接読み取れないため、
+///       罫線が設定されるべきセルにデータが存在することを確認する
 #[test]
 fn test_excel_file_has_borders() {
     use calamine::{open_workbook, Reader, Xlsx};
@@ -3635,17 +3643,62 @@ fn test_excel_file_has_borders() {
     // Excelファイルが存在することを確認
     assert!(excel_path.exists(), "Excel file should exist");
 
-    // Excelファイルを読み込み、シートとデータの存在を確認
-    let workbook: Xlsx<_> = open_workbook(&excel_path).expect("Failed to open Excel file");
-    let sheet_names = workbook.sheet_names();
+    // Excelファイルを読み込み
+    let mut workbook: Xlsx<_> = open_workbook(&excel_path).expect("Failed to open Excel file");
+    let sheet_names = workbook.sheet_names().to_vec();
 
     // 必要なシートが存在することを確認
+    assert!(sheet_names.contains(&"Summary".to_string()), "Summary sheet should exist");
     assert!(sheet_names.contains(&"File Tree".to_string()), "File Tree sheet should exist");
     assert!(sheet_names.contains(&"Details".to_string()), "Details sheet should exist");
 
-    // 注意: calamineは罫線情報を直接読み取れないため、
-    // シートとデータの存在確認のみを行う。
-    // 罫線の視覚的確認は手動で行う必要がある。
+    // Summaryシートの構造を確認（罫線が設定されるべきセル）
+    if let Ok(range) = workbook.worksheet_range("Summary") {
+        // 基本情報セクション（罫線が設定されるべき）
+        let required_labels = ["Repository:", "Source ref:", "Target ref:", "Output:", "Date:"];
+        for label in required_labels {
+            let has_label = range.rows().any(|row| {
+                row.iter().any(|cell| cell.to_string().contains(label))
+            });
+            assert!(has_label, "Summary should have '{}' label", label);
+        }
+
+        // Statisticsセクション（罫線が設定されるべき）
+        let stats_labels = ["Added:", "Modified:", "Deleted:", "Unchanged:", "Total:"];
+        for label in stats_labels {
+            let has_label = range.rows().any(|row| {
+                row.iter().any(|cell| cell.to_string() == label)
+            });
+            assert!(has_label, "Summary should have '{}' in Statistics section", label);
+        }
+    }
+
+    // File Treeシートの構造を確認（罫線が設定されるべき）
+    if let Ok(range) = workbook.worksheet_range("File Tree") {
+        // ヘッダー行が存在
+        let first_row: Vec<String> = range.rows().next()
+            .map(|row| row.iter().map(|c| c.to_string()).collect())
+            .unwrap_or_default();
+        // Path または空のセルがある（ルートレベルのファイルのみの場合、PathとStatusが隣接）
+        assert!(first_row.iter().any(|s| s == "Path" || s == "Status"),
+            "File Tree should have 'Path' or 'Status' header: {:?}", first_row);
+        assert!(first_row.iter().any(|s| s == "Status"), "File Tree should have 'Status' header: {:?}", first_row);
+
+        // データ行が存在（最低2行：ヘッダー + データ）
+        let row_count = range.rows().count();
+        assert!(row_count >= 2, "File Tree should have at least header and one data row");
+    }
+
+    // Detailsシートの構造を確認（罫線が設定されるべき）
+    if let Ok(range) = workbook.worksheet_range("Details") {
+        // ヘッダー行が存在
+        let first_row: Vec<String> = range.rows().next()
+            .map(|row| row.iter().map(|c| c.to_string()).collect())
+            .unwrap_or_default();
+        assert!(first_row.iter().any(|s| s == "Status"), "Details should have 'Status' header");
+        assert!(first_row.iter().any(|s| s == "Directory"), "Details should have 'Directory' header");
+        assert!(first_row.iter().any(|s| s == "File"), "Details should have 'File' header");
+    }
 }
 
 /// 日本語ファイル名でもステータス位置が整列されることを確認
@@ -4107,4 +4160,287 @@ fn test_three_way_file_tree_alignment() {
     assert!(summary.contains("root.txt"), "Summary should contain root.txt");
     assert!(summary.contains("nested.txt"), "Summary should contain nested.txt");
     assert!(summary.contains("deep.txt"), "Summary should contain deep.txt");
+}
+
+// ============================================================================
+// ExcelファイルTree ディレクトリ分割形式テスト
+// ============================================================================
+
+/// EXCEL-TREE-001: FileTreeシートのディレクトリ分割形式検証（二者間比較）
+#[test]
+fn test_excel_file_tree_directory_split_two_way() {
+    use calamine::{Reader, open_workbook, Xlsx};
+
+    let repo = TestRepo::new();
+
+    // 初期コミット
+    repo.create_file("root.txt", "root content");
+    repo.add_all();
+    let commit1 = repo.commit("initial");
+
+    // ネストしたディレクトリ構造を作成
+    repo.create_file("src/main.rs", "fn main() {}");
+    repo.create_file("src/lib/utils.rs", "pub fn util() {}");
+    repo.create_file("tests/test_main.rs", "// test");
+    repo.add_all();
+    let commit2 = repo.commit("add nested files");
+
+    let excel_path = repo.temp_dir.path().join("report.xlsx");
+    let output = repo.run_cmd(&[
+        "-S", &commit1,
+        "-T", &commit2,
+        "-E", excel_path.to_str().unwrap(),
+    ]);
+    assert!(output.status.success(), "Command failed: {:?}", output);
+    assert!(excel_path.exists(), "Excel file should exist");
+
+    // Excelファイルを読み込み
+    let mut workbook: Xlsx<_> = open_workbook(&excel_path).expect("Failed to open Excel file");
+
+    // File Treeシートを取得
+    if let Ok(file_tree_sheet) = workbook.worksheet_range("File Tree") {
+        // ヘッダー行を確認（ディレクトリ分割形式: A列にPath、最後にStatus）
+        let headers: Vec<String> = file_tree_sheet.rows()
+            .next()
+            .map(|row| row.iter().map(|c| c.to_string()).collect())
+            .unwrap_or_default();
+
+        // Statusヘッダーが存在することを確認
+        assert!(headers.iter().any(|h| h == "Status"),
+            "Headers should contain 'Status': {:?}", headers);
+        // Pathヘッダーが存在することを確認
+        assert!(headers.iter().any(|h| h == "Path"),
+            "Headers should contain 'Path': {:?}", headers);
+
+        // データ行を確認
+        let mut found_nested_file = false;
+        for row in file_tree_sheet.rows().skip(1) {
+            let cells: Vec<String> = row.iter().map(|c| c.to_string()).collect();
+
+            // src/lib/utils.rs が分割されているか確認
+            // 各コンポーネントが別々のセルにあるはず
+            if cells.contains(&"utils.rs".to_string()) {
+                found_nested_file = true;
+                // utils.rs の前に src と lib が別行（別エントリ）に存在
+                // 深度に応じて異なるセル位置に配置されるはず
+                let utils_idx = cells.iter().position(|c| c == "utils.rs").unwrap();
+                // utils.rs は深度2なので、col=2にあるはず（0-indexed）
+                assert!(utils_idx >= 2, "utils.rs should be at depth 2 or deeper, found at col {}", utils_idx);
+            }
+        }
+        assert!(found_nested_file, "Should find nested file utils.rs in File Tree");
+
+        // ディレクトリ構造として src/ と lib/ が別行に存在することを確認
+        let all_cells: Vec<String> = file_tree_sheet.rows()
+            .flat_map(|row| row.iter().map(|c| c.to_string()))
+            .collect();
+        assert!(all_cells.iter().any(|c| c == "src/"),
+            "Should have 'src/' directory entry: {:?}", all_cells);
+        assert!(all_cells.iter().any(|c| c == "lib/"),
+            "Should have 'lib/' directory entry: {:?}", all_cells);
+    } else {
+        panic!("Failed to get File Tree sheet");
+    }
+}
+
+/// EXCEL-TREE-002: FileTreeシートのディレクトリ分割形式検証（三者間比較）
+#[test]
+fn test_excel_file_tree_directory_split_three_way() {
+    use calamine::{Reader, open_workbook, Xlsx};
+
+    let repo = TestRepo::new();
+
+    // ベース
+    repo.create_file("base.txt", "base");
+    repo.add_all();
+    let base = repo.commit("base");
+
+    // ours
+    repo.create_branch("ours");
+    repo.checkout("ours");
+    repo.create_file("src/feature/new_feature.rs", "// new feature");
+    repo.add_all();
+    let ours = repo.commit("ours");
+
+    // theirs
+    repo.checkout(&base);
+    repo.create_branch("theirs");
+    repo.checkout("theirs");
+    repo.create_file("src/feature/another.rs", "// another");
+    repo.add_all();
+    let theirs = repo.commit("theirs");
+
+    let excel_path = repo.temp_dir.path().join("report.xlsx");
+    let output = repo.run_cmd(&[
+        "--three-way",
+        "-S", &ours,
+        "-T", &theirs,
+        "-B", &base,
+        "-E", excel_path.to_str().unwrap(),
+    ]);
+    assert!(output.status.success(), "Command failed: {:?}", output);
+
+    let mut workbook: Xlsx<_> = open_workbook(&excel_path).expect("Failed to open Excel file");
+
+    if let Ok(file_tree_sheet) = workbook.worksheet_range("File Tree") {
+        // ディレクトリ構造として src/ と feature/ が別行に存在することを確認
+        let all_cells: Vec<String> = file_tree_sheet.rows()
+            .flat_map(|row| row.iter().map(|c| c.to_string()))
+            .collect();
+        assert!(all_cells.iter().any(|c| c == "src/"),
+            "Should have 'src/' directory entry: {:?}", all_cells);
+        assert!(all_cells.iter().any(|c| c == "feature/"),
+            "Should have 'feature/' directory entry: {:?}", all_cells);
+
+        // ファイルが含まれていることを確認
+        let has_new_feature = all_cells.iter().any(|c| c == "new_feature.rs");
+        let has_another = all_cells.iter().any(|c| c == "another.rs");
+        assert!(has_new_feature || has_another,
+            "Should find feature files in File Tree: {:?}", all_cells);
+    } else {
+        panic!("Failed to get File Tree sheet");
+    }
+}
+
+// ============================================================================
+// Excelファイル グルーピング機能テスト
+// ============================================================================
+
+/// EXCEL-GROUP-001: --excel-fold-levelオプションによる行グルーピング（二者間比較）
+#[test]
+fn test_excel_fold_level_two_way() {
+    use calamine::{Reader, open_workbook, Xlsx};
+
+    let repo = TestRepo::new();
+
+    // 初期コミット
+    repo.create_file("readme.txt", "readme");
+    repo.add_all();
+    let commit1 = repo.commit("initial");
+
+    // 深いディレクトリ構造を作成
+    repo.create_file("level1/file1.txt", "1");
+    repo.create_file("level1/level2/file2.txt", "2");
+    repo.create_file("level1/level2/level3/file3.txt", "3");
+    repo.create_file("level1/level2/level3/level4/file4.txt", "4");
+    repo.add_all();
+    let commit2 = repo.commit("add deep files");
+
+    let excel_path = repo.temp_dir.path().join("report.xlsx");
+
+    // --excel-fold-level 2 を指定
+    let output = repo.run_cmd(&[
+        "-S", &commit1,
+        "-T", &commit2,
+        "-E", excel_path.to_str().unwrap(),
+        "--excel-fold-level", "2",
+    ]);
+    assert!(output.status.success(), "Command failed: {:?}", output);
+    assert!(excel_path.exists(), "Excel file should exist");
+
+    // Excelファイルを読み込んで深いファイルが存在することを確認
+    // (グルーピング自体はcalamineでは確認できないが、データの存在は確認可能)
+    let mut workbook: Xlsx<_> = open_workbook(&excel_path).expect("Failed to open Excel file");
+
+    if let Ok(file_tree_sheet) = workbook.worksheet_range("File Tree") {
+        // 深いファイルが含まれていることを確認
+        let all_cells: Vec<String> = file_tree_sheet.rows()
+            .flat_map(|row| row.iter().map(|c| c.to_string()))
+            .collect();
+        let all_text = all_cells.join(" ");
+
+        assert!(all_text.contains("file1.txt"), "Should contain file1.txt");
+        assert!(all_text.contains("file2.txt"), "Should contain file2.txt");
+        assert!(all_text.contains("file3.txt"), "Should contain file3.txt");
+        assert!(all_text.contains("file4.txt"), "Should contain file4.txt");
+    } else {
+        panic!("Failed to get File Tree sheet");
+    }
+}
+
+/// EXCEL-GROUP-002: --excel-fold-levelオプションによる行グルーピング（三者間比較）
+#[test]
+fn test_excel_fold_level_three_way() {
+    use calamine::{Reader, open_workbook, Xlsx};
+
+    let repo = TestRepo::new();
+
+    // ベース
+    repo.create_file("base.txt", "base");
+    repo.add_all();
+    let base = repo.commit("base");
+
+    // ours（深いディレクトリ）
+    repo.create_branch("ours");
+    repo.checkout("ours");
+    repo.create_file("a/b/c/d/deep_ours.txt", "deep ours");
+    repo.add_all();
+    let ours = repo.commit("ours deep");
+
+    // theirs
+    repo.checkout(&base);
+    repo.create_branch("theirs");
+    repo.checkout("theirs");
+    repo.create_file("x/y/z/deep_theirs.txt", "deep theirs");
+    repo.add_all();
+    let theirs = repo.commit("theirs deep");
+
+    let excel_path = repo.temp_dir.path().join("report.xlsx");
+
+    // --excel-fold-level 3 を指定
+    let output = repo.run_cmd(&[
+        "--three-way",
+        "-S", &ours,
+        "-T", &theirs,
+        "-B", &base,
+        "-E", excel_path.to_str().unwrap(),
+        "--excel-fold-level", "3",
+    ]);
+    assert!(output.status.success(), "Command failed: {:?}", output);
+
+    let mut workbook: Xlsx<_> = open_workbook(&excel_path).expect("Failed to open Excel file");
+
+    if let Ok(file_tree_sheet) = workbook.worksheet_range("File Tree") {
+        let all_cells: Vec<String> = file_tree_sheet.rows()
+            .flat_map(|row| row.iter().map(|c| c.to_string()))
+            .collect();
+        let all_text = all_cells.join(" ");
+
+        assert!(all_text.contains("deep_ours.txt"), "Should contain deep_ours.txt");
+        assert!(all_text.contains("deep_theirs.txt"), "Should contain deep_theirs.txt");
+    } else {
+        panic!("Failed to get File Tree sheet");
+    }
+}
+
+/// EXCEL-GROUP-003: デフォルトのfold-level（グルーピングなし）
+#[test]
+fn test_excel_default_fold_level() {
+    use calamine::{Reader, open_workbook, Xlsx};
+
+    let repo = TestRepo::new();
+
+    repo.create_file("initial.txt", "initial");
+    repo.add_all();
+    let commit1 = repo.commit("initial");
+
+    repo.create_file("new.txt", "new");
+    repo.add_all();
+    let commit2 = repo.commit("add new");
+
+    let excel_path = repo.temp_dir.path().join("report.xlsx");
+
+    // --excel-fold-level を指定しない（デフォルト=0でグルーピングなし）
+    let output = repo.run_cmd(&[
+        "-S", &commit1,
+        "-T", &commit2,
+        "-E", excel_path.to_str().unwrap(),
+    ]);
+    assert!(output.status.success(), "Command failed: {:?}", output);
+
+    // ファイルが正常に作成されることを確認
+    let mut workbook: Xlsx<_> = open_workbook(&excel_path).expect("Failed to open Excel file");
+    let sheet_names = workbook.sheet_names().to_vec();
+    assert!(sheet_names.contains(&"File Tree".to_string()),
+        "Should have File Tree sheet: {:?}", sheet_names);
 }

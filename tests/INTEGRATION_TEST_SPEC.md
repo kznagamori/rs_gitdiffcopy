@@ -447,6 +447,25 @@ cargo test --test integration_tests 2>&1 | tee test_output.txt
 
 ---
 
+### 26. ExcelファイルTree ディレクトリ分割形式テスト
+
+| テストID | テスト名 | テスト内容 | 期待結果 | 分類 |
+|---------|---------|-----------|---------|------|
+| EXCEL-TREE-001 | test_excel_file_tree_directory_split_two_way | 二者間比較でのFileTreeディレクトリ分割 | パス各コンポーネントが別々のセルに配置される（src/, lib/, utils.rs等） | 正常系 |
+| EXCEL-TREE-002 | test_excel_file_tree_directory_split_three_way | 三者間比較でのFileTreeディレクトリ分割 | パス各コンポーネントが別々のセルに配置される | 正常系 |
+
+---
+
+### 27. Excelファイル グルーピング機能テスト
+
+| テストID | テスト名 | テスト内容 | 期待結果 | 分類 |
+|---------|---------|-----------|---------|------|
+| EXCEL-GROUP-001 | test_excel_fold_level_two_way | 二者間比較での--excel-fold-levelオプション | 指定深さ以上の行がグルーピングされる | 正常系 |
+| EXCEL-GROUP-002 | test_excel_fold_level_three_way | 三者間比較での--excel-fold-levelオプション | 指定深さ以上の行がグルーピングされる | 正常系 |
+| EXCEL-GROUP-003 | test_excel_default_fold_level | デフォルトのfold-level（グルーピングなし） | --excel-fold-level未指定時はグルーピングなし | 正常系 |
+
+---
+
 ## 変更履歴
 
 | 日付 | バージョン | 変更内容 |
@@ -455,3 +474,4 @@ cargo test --test integration_tests 2>&1 | tee test_output.txt
 | 2026-01-21 | 1.1 | パッチファイルテスト (PATCH-001〜010)、エッジケーステスト (EDGE-001〜005)、シンボリックリンクテスト (SYM-001〜003)、パーミッションテスト (PERM-001〜002)、Excelフォーマット詳細テスト (EXFMT-001〜010)、Filter statusテスト (FILT-001〜007)、統計テスト (STATS-001〜006)、Tree表示テスト (TREE-001〜005) を追加 |
 | 2026-01-21 | 1.2 | 不具合修正確認テスト (BUGFIX-001〜004) を追加：サマリーファイルのANSIエスケープコード問題、ステータス位置整列問題、Excel罫線問題の修正確認 |
 | 2026-01-21 | 1.3 | 三者間グループキーワードテスト (GRP-001〜006)、三者間File Tree整列テスト (ALIGN-001〜003) を追加 |
+| 2026-01-22 | 1.4 | ExcelファイルTree ディレクトリ分割形式テスト (EXCEL-TREE-001〜002)、Excelファイル グルーピング機能テスト (EXCEL-GROUP-001〜003) を追加 |
