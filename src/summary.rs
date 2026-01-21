@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{self, Write};
 use std::path::Path;
+use unicode_width::UnicodeWidthStr;
 
 /// サマリー出力
 pub struct SummaryWriter<'a> {
@@ -40,6 +41,49 @@ impl<'a> SummaryWriter<'a> {
         repo_path: &Path,
         copy_errors: &[String],
     ) -> io::Result<()> {
+        // コンソール出力用（カラーあり）
+        let console_output = self.build_two_way_output(
+            files,
+            stats,
+            source_ref,
+            source_commit,
+            target_ref,
+            target_commit,
+            repo_path,
+            copy_errors,
+            self.use_color,
+        );
+
+        // ファイル出力用（カラーなし）
+        let file_output = self.build_two_way_output(
+            files,
+            stats,
+            source_ref,
+            source_commit,
+            target_ref,
+            target_commit,
+            repo_path,
+            copy_errors,
+            false,
+        );
+
+        // 出力
+        self.output_summary(&console_output, &file_output)
+    }
+
+    /// 二者間比較のサマリー文字列を構築
+    fn build_two_way_output(
+        &self,
+        files: &[DiffFile],
+        stats: &Statistics,
+        source_ref: &str,
+        source_commit: &str,
+        target_ref: &str,
+        target_commit: &str,
+        repo_path: &Path,
+        copy_errors: &[String],
+        use_color: bool,
+    ) -> String {
         let mut output = String::new();
 
         // ヘッダー
@@ -68,7 +112,7 @@ impl<'a> SummaryWriter<'a> {
 
         // ファイルツリー
         if !self.config.no_tree && !self.config.stats_only {
-            self.write_file_tree(&mut output, files);
+            self.write_file_tree(&mut output, files, use_color);
         }
 
         // 詳細セクション
@@ -86,8 +130,7 @@ impl<'a> SummaryWriter<'a> {
             }
         }
 
-        // 出力
-        self.output_summary(&output)
+        output
     }
 
     /// 三者間比較のサマリーを出力
@@ -104,6 +147,55 @@ impl<'a> SummaryWriter<'a> {
         repo_path: &Path,
         copy_errors: &[String],
     ) -> io::Result<()> {
+        // コンソール出力用（カラーあり）
+        let console_output = self.build_three_way_output(
+            files,
+            stats,
+            base_ref,
+            base_commit,
+            ours_ref,
+            ours_commit,
+            theirs_ref,
+            theirs_commit,
+            repo_path,
+            copy_errors,
+            self.use_color,
+        );
+
+        // ファイル出力用（カラーなし）
+        let file_output = self.build_three_way_output(
+            files,
+            stats,
+            base_ref,
+            base_commit,
+            ours_ref,
+            ours_commit,
+            theirs_ref,
+            theirs_commit,
+            repo_path,
+            copy_errors,
+            false,
+        );
+
+        // 出力
+        self.output_summary(&console_output, &file_output)
+    }
+
+    /// 三者間比較のサマリー文字列を構築
+    fn build_three_way_output(
+        &self,
+        files: &[ThreeWayDiffFile],
+        stats: &ThreeWayStatistics,
+        base_ref: &str,
+        base_commit: &str,
+        ours_ref: &str,
+        ours_commit: &str,
+        theirs_ref: &str,
+        theirs_commit: &str,
+        repo_path: &Path,
+        copy_errors: &[String],
+        _use_color: bool,
+    ) -> String {
         let mut output = String::new();
 
         // ヘッダー
@@ -155,8 +247,7 @@ impl<'a> SummaryWriter<'a> {
             }
         }
 
-        // 出力
-        self.output_summary(&output)
+        output
     }
 
     /// オプションセクションを出力
@@ -248,7 +339,7 @@ impl<'a> SummaryWriter<'a> {
     }
 
     /// ファイルツリーを出力
-    fn write_file_tree(&self, output: &mut String, files: &[DiffFile]) {
+    fn write_file_tree(&self, output: &mut String, files: &[DiffFile], use_color: bool) {
         output.push_str("\n================\n");
         output.push_str("File Tree\n");
         output.push_str("================\n");
@@ -256,7 +347,50 @@ impl<'a> SummaryWriter<'a> {
 
         // ファイルをディレクトリ構造に整理
         let tree = self.build_tree(files);
-        self.write_tree_node(output, &tree, "", true);
+
+        // 最長幅を計算
+        let max_width = self.calculate_max_tree_width(&tree, "");
+
+        self.write_tree_node(output, &tree, "", true, max_width, use_color);
+    }
+
+    /// ツリー内の最長行幅を計算
+    fn calculate_max_tree_width(&self, tree: &BTreeMap<String, TreeNode>, prefix: &str) -> usize {
+        let mut max_width = 0usize;
+        let entries: Vec<_> = tree.iter().collect();
+        let len = entries.len();
+
+        for (i, (name, node)) in entries.iter().enumerate() {
+            let is_last_entry = i == len - 1;
+            let connector = if is_last_entry { "└── " } else { "├── " };
+            let child_prefix = if is_last_entry { "    " } else { "│   " };
+
+            match node {
+                TreeNode::File(_) => {
+                    // prefix + connector + name の表示幅を計算
+                    let line = format!("{}{}{}", prefix, connector, name);
+                    let width = UnicodeWidthStr::width(line.as_str());
+                    if width > max_width {
+                        max_width = width;
+                    }
+                }
+                TreeNode::Dir(children) => {
+                    // ディレクトリ名も幅計算に含める（"/"を含む）
+                    let line = format!("{}{}{}/", prefix, connector, name);
+                    let width = UnicodeWidthStr::width(line.as_str());
+                    if width > max_width {
+                        max_width = width;
+                    }
+                    // 再帰的に子ノードの幅を計算
+                    let child_max = self.calculate_max_tree_width(children, &format!("{}{}", prefix, child_prefix));
+                    if child_max > max_width {
+                        max_width = child_max;
+                    }
+                }
+            }
+        }
+
+        max_width
     }
 
     /// 三者間ファイルツリーを出力
@@ -320,6 +454,8 @@ impl<'a> SummaryWriter<'a> {
         tree: &BTreeMap<String, TreeNode>,
         prefix: &str,
         _is_last: bool,
+        max_width: usize,
+        use_color: bool,
     ) {
         let entries: Vec<_> = tree.iter().collect();
         let len = entries.len();
@@ -331,22 +467,29 @@ impl<'a> SummaryWriter<'a> {
 
             match node {
                 TreeNode::File(file) => {
-                    let status_tag = self.format_status_tag(file);
-                    output.push_str(&format!("{}{}{} {}\n", prefix, connector, name, status_tag));
+                    let line = format!("{}{}{}", prefix, connector, name);
+                    let current_width = UnicodeWidthStr::width(line.as_str());
+                    let padding = if max_width > current_width {
+                        " ".repeat(max_width - current_width)
+                    } else {
+                        String::new()
+                    };
+                    let status_tag = self.format_status_tag(file, use_color);
+                    output.push_str(&format!("{}{} {}\n", line, padding, status_tag));
                 }
                 TreeNode::Dir(children) => {
                     output.push_str(&format!("{}{}{}/\n", prefix, connector, name));
-                    self.write_tree_node(output, children, &format!("{}{}", prefix, child_prefix), is_last_entry);
+                    self.write_tree_node(output, children, &format!("{}{}", prefix, child_prefix), is_last_entry, max_width, use_color);
                 }
             }
         }
     }
 
     /// ステータスタグをフォーマット
-    fn format_status_tag(&self, file: &DiffFile) -> String {
+    fn format_status_tag(&self, file: &DiffFile, use_color: bool) -> String {
         let tag = file.status.tag();
 
-        if self.use_color {
+        if use_color {
             match file.status {
                 FileStatus::Added => tag.green().to_string(),
                 FileStatus::Modified => tag.blue().to_string(),
@@ -508,14 +651,14 @@ impl<'a> SummaryWriter<'a> {
     }
 
     /// サマリーを出力
-    fn output_summary(&self, content: &str) -> io::Result<()> {
-        // コンソールに出力
-        print!("{}", content);
+    fn output_summary(&self, console_content: &str, file_content: &str) -> io::Result<()> {
+        // コンソールに出力（カラー付き）
+        print!("{}", console_content);
 
-        // ファイルに出力（指定されている場合）
+        // ファイルに出力（カラーなし、指定されている場合）
         if let Some(ref path) = self.config.summary {
             let mut file = File::create(path)?;
-            file.write_all(content.as_bytes())?;
+            file.write_all(file_content.as_bytes())?;
         }
 
         Ok(())
@@ -526,4 +669,311 @@ impl<'a> SummaryWriter<'a> {
 enum TreeNode {
     File(DiffFile),
     Dir(BTreeMap<String, TreeNode>),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn create_test_config() -> MergedConfig {
+        MergedConfig {
+            repository: None,
+            git_path: None,
+            full_clone: false,
+            cache_dir: None,
+            source: "main".to_string(),
+            target: "develop".to_string(),
+            output: PathBuf::from("/tmp/output"),
+            exclude: vec![],
+            force: false,
+            verbose: false,
+            dry_run: false,
+            both_versions: false,
+            summary: None,
+            check_permissions: crate::types::PermissionCheckMode::None,
+            patch: false,
+            patch_file: None,
+            excel: None,
+            excel_fold_level: None,
+            show_unchanged: false,
+            filter_status: vec![],
+            stats_only: false,
+            no_tree: false,
+            no_details: false,
+            copy_deleted: false,
+            preserve_timestamps: false,
+            workers: 4,
+            temp_dir: None,
+            color: crate::types::ColorMode::Never,
+            log_level: crate::types::LogLevel::Warn,
+            three_way: false,
+            base: None,
+            merge_style: crate::types::MergeStyle::All,
+            conflict_only: false,
+        }
+    }
+
+    fn create_test_file(path: &str, status: FileStatus) -> DiffFile {
+        DiffFile::new(PathBuf::from(path), status)
+    }
+
+    // format_status_tag のテスト（カラーなし）
+    #[test]
+    fn test_format_status_tag_added_no_color() {
+        let config = create_test_config();
+        let writer = SummaryWriter::new(&config);
+        let file = create_test_file("file.txt", FileStatus::Added);
+        let tag = writer.format_status_tag(&file, false);
+        assert_eq!(tag, "[added]");
+        assert!(!tag.contains("\x1b[")); // ANSIエスケープコードが含まれないことを確認
+    }
+
+    #[test]
+    fn test_format_status_tag_modified_no_color() {
+        let config = create_test_config();
+        let writer = SummaryWriter::new(&config);
+        let file = create_test_file("file.txt", FileStatus::Modified);
+        let tag = writer.format_status_tag(&file, false);
+        assert_eq!(tag, "[modified]");
+        assert!(!tag.contains("\x1b["));
+    }
+
+    #[test]
+    fn test_format_status_tag_deleted_no_color() {
+        let config = create_test_config();
+        let writer = SummaryWriter::new(&config);
+        let file = create_test_file("file.txt", FileStatus::Deleted);
+        let tag = writer.format_status_tag(&file, false);
+        assert_eq!(tag, "[deleted]");
+        assert!(!tag.contains("\x1b["));
+    }
+
+    #[test]
+    fn test_format_status_tag_renamed_no_color() {
+        let config = create_test_config();
+        let writer = SummaryWriter::new(&config);
+        let file = create_test_file("file.txt", FileStatus::Renamed);
+        let tag = writer.format_status_tag(&file, false);
+        assert_eq!(tag, "[renamed]");
+        assert!(!tag.contains("\x1b["));
+    }
+
+    #[test]
+    fn test_format_status_tag_copied_no_color() {
+        let config = create_test_config();
+        let writer = SummaryWriter::new(&config);
+        let file = create_test_file("file.txt", FileStatus::Copied);
+        let tag = writer.format_status_tag(&file, false);
+        assert_eq!(tag, "[copied]");
+        assert!(!tag.contains("\x1b["));
+    }
+
+    #[test]
+    fn test_format_status_tag_type_changed_no_color() {
+        let config = create_test_config();
+        let writer = SummaryWriter::new(&config);
+        let file = create_test_file("file.txt", FileStatus::TypeChanged);
+        let tag = writer.format_status_tag(&file, false);
+        assert_eq!(tag, "[type-changed]");
+        assert!(!tag.contains("\x1b["));
+    }
+
+    #[test]
+    fn test_format_status_tag_unchanged_no_color() {
+        let config = create_test_config();
+        let writer = SummaryWriter::new(&config);
+        let file = create_test_file("file.txt", FileStatus::Unchanged);
+        let tag = writer.format_status_tag(&file, false);
+        assert_eq!(tag, "[unchanged]");
+        assert!(!tag.contains("\x1b["));
+    }
+
+    // format_status_tag のテスト（カラーあり）
+    #[test]
+    fn test_format_status_tag_added_with_color() {
+        let config = create_test_config();
+        let writer = SummaryWriter::new(&config);
+        let file = create_test_file("file.txt", FileStatus::Added);
+        let tag = writer.format_status_tag(&file, true);
+        // カラー付きの場合、ANSIエスケープコードが含まれる
+        assert!(tag.contains("[added]"));
+    }
+
+    // build_tree のテスト
+    #[test]
+    fn test_build_tree_single_file() {
+        let config = create_test_config();
+        let writer = SummaryWriter::new(&config);
+        let files = vec![create_test_file("file.txt", FileStatus::Added)];
+        let tree = writer.build_tree(&files);
+        assert!(tree.contains_key("file.txt"));
+    }
+
+    #[test]
+    fn test_build_tree_nested_file() {
+        let config = create_test_config();
+        let writer = SummaryWriter::new(&config);
+        let files = vec![create_test_file("src/main.rs", FileStatus::Added)];
+        let tree = writer.build_tree(&files);
+        assert!(tree.contains_key("src"));
+        if let Some(TreeNode::Dir(children)) = tree.get("src") {
+            assert!(children.contains_key("main.rs"));
+        } else {
+            panic!("Expected directory node");
+        }
+    }
+
+    #[test]
+    fn test_build_tree_multiple_files_same_dir() {
+        let config = create_test_config();
+        let writer = SummaryWriter::new(&config);
+        let files = vec![
+            create_test_file("src/main.rs", FileStatus::Added),
+            create_test_file("src/lib.rs", FileStatus::Modified),
+        ];
+        let tree = writer.build_tree(&files);
+        if let Some(TreeNode::Dir(children)) = tree.get("src") {
+            assert!(children.contains_key("main.rs"));
+            assert!(children.contains_key("lib.rs"));
+        } else {
+            panic!("Expected directory node");
+        }
+    }
+
+    #[test]
+    fn test_build_tree_deep_nesting() {
+        let config = create_test_config();
+        let writer = SummaryWriter::new(&config);
+        let files = vec![create_test_file("a/b/c/d/file.txt", FileStatus::Added)];
+        let tree = writer.build_tree(&files);
+        assert!(tree.contains_key("a"));
+    }
+
+    #[test]
+    fn test_build_tree_japanese_path() {
+        let config = create_test_config();
+        let writer = SummaryWriter::new(&config);
+        let files = vec![create_test_file("日本語/ファイル.txt", FileStatus::Added)];
+        let tree = writer.build_tree(&files);
+        assert!(tree.contains_key("日本語"));
+    }
+
+    // calculate_max_tree_width のテスト
+    #[test]
+    fn test_calculate_max_tree_width_single_file() {
+        let config = create_test_config();
+        let writer = SummaryWriter::new(&config);
+        let files = vec![create_test_file("file.txt", FileStatus::Added)];
+        let tree = writer.build_tree(&files);
+        let width = writer.calculate_max_tree_width(&tree, "");
+        // "├── file.txt" の幅
+        assert!(width > 0);
+    }
+
+    #[test]
+    fn test_calculate_max_tree_width_long_filename() {
+        let config = create_test_config();
+        let writer = SummaryWriter::new(&config);
+        let files = vec![
+            create_test_file("short.txt", FileStatus::Added),
+            create_test_file("very_long_filename_that_should_be_longer.txt", FileStatus::Added),
+        ];
+        let tree = writer.build_tree(&files);
+        let width = writer.calculate_max_tree_width(&tree, "");
+        // 長いファイル名の幅が使用されることを確認
+        assert!(width > 20);
+    }
+
+    #[test]
+    fn test_calculate_max_tree_width_nested_long() {
+        let config = create_test_config();
+        let writer = SummaryWriter::new(&config);
+        let files = vec![
+            create_test_file("a.txt", FileStatus::Added),
+            create_test_file("dir/very_long_nested_filename.txt", FileStatus::Added),
+        ];
+        let tree = writer.build_tree(&files);
+        let width = writer.calculate_max_tree_width(&tree, "");
+        // ネストされたファイルの幅が使用されることを確認
+        assert!(width > 20);
+    }
+
+    #[test]
+    fn test_calculate_max_tree_width_japanese() {
+        let config = create_test_config();
+        let writer = SummaryWriter::new(&config);
+        let files = vec![
+            create_test_file("a.txt", FileStatus::Added),
+            create_test_file("日本語ディレクトリ/日本語ファイル名.txt", FileStatus::Added),
+        ];
+        let tree = writer.build_tree(&files);
+        let width = writer.calculate_max_tree_width(&tree, "");
+        // 日本語は表示幅が2倍であることを考慮
+        assert!(width > 20);
+    }
+
+    // Statistics のテスト
+    #[test]
+    fn test_statistics_total() {
+        let stats = Statistics {
+            added: 5,
+            modified: 3,
+            deleted: 2,
+            renamed: 1,
+            copied: 0,
+            type_changed: 0,
+            unchanged: 10,
+            symlinks: 1,
+            submodules: 0,
+            permission_changes: 1,
+            errors: 0,
+            copy_failed: 0,
+        };
+        assert_eq!(stats.total(), 21);
+    }
+
+    // ThreeWayStatistics のテスト
+    #[test]
+    fn test_three_way_statistics_total() {
+        let stats = ThreeWayStatistics {
+            unchanged: 10,
+            ours_only: 5,
+            theirs_only: 3,
+            both_same: 2,
+            conflict: 1,
+            added_ours: 2,
+            added_theirs: 1,
+            added_both_same: 1,
+            added_both_diff: 1,
+            deleted_ours: 1,
+            deleted_theirs: 1,
+            deleted_both: 1,
+            modify_delete: 0,
+            delete_modify: 0,
+        };
+        assert_eq!(stats.total(), 29);
+    }
+
+    #[test]
+    fn test_three_way_statistics_conflicts() {
+        let stats = ThreeWayStatistics {
+            unchanged: 10,
+            ours_only: 5,
+            theirs_only: 3,
+            both_same: 2,
+            conflict: 3,
+            added_ours: 2,
+            added_theirs: 1,
+            added_both_same: 1,
+            added_both_diff: 2,
+            deleted_ours: 1,
+            deleted_theirs: 1,
+            deleted_both: 1,
+            modify_delete: 1,
+            delete_modify: 1,
+        };
+        // conflict + added_both_diff + modify_delete + delete_modify = 3 + 2 + 1 + 1 = 7
+        assert_eq!(stats.conflicts(), 7);
+    }
 }

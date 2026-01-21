@@ -413,9 +413,45 @@ cargo test --test integration_tests 2>&1 | tee test_output.txt
 
 ---
 
+### 23. 不具合修正確認テスト
+
+| テストID | テスト名 | テスト内容 | 期待結果 | 分類 |
+|---------|---------|-----------|---------|------|
+| BUGFIX-001 | test_summary_file_no_ansi_escape_codes | サマリーファイルにANSIエスケープコードが含まれないこと | ファイル内に\x1b[、[32m、[0m等が含まれない | 正常系 |
+| BUGFIX-002 | test_summary_file_status_alignment | サマリーファイルのステータス位置が整列されていること | すべての[added]等のタグが同じ列位置に表示される | 正常系 |
+| BUGFIX-003 | test_excel_file_has_borders | Excelファイルの罫線が正しく設定されていること | File TreeシートとDetailsシートが存在し、データが含まれる | 正常系 |
+| BUGFIX-004 | test_summary_file_status_alignment_with_japanese | 日本語ファイル名でもステータス位置が整列されること | ANSIエスケープコードが含まれず、[added]タグが正しく表示される | 正常系 |
+
+---
+
+### 24. 三者間グループキーワードテスト
+
+| テストID | テスト名 | テスト内容 | 期待結果 | 分類 |
+|---------|---------|-----------|---------|------|
+| GRP-001 | test_group_keyword_exclusion_added | `--filter-status all,^added`で^addedグループ除外 | added-ours, added-theirs, added-both-same, added-both-diffが除外される | 正常系 |
+| GRP-002 | test_group_keyword_exclusion_deleted | `--filter-status all,^deleted`で^deletedグループ除外 | deleted-ours, deleted-theirs, deleted-bothが除外される | 正常系 |
+| GRP-003 | test_group_keyword_exclusion_modified | `--filter-status all,^modified`で^modifiedグループ除外 | ours-only, theirs-only, both-same, conflictが除外される | 正常系 |
+| GRP-004 | test_group_keyword_exclusion_conflicts | `--filter-status all,^conflicts`で^conflictsグループ除外 | conflict, added-both-diff, modify-delete, delete-modifyが除外される | 正常系 |
+| GRP-005 | test_group_keyword_inclusion_added | `--filter-status added`でaddedグループ包含 | added-*のみが表示され、他は除外される | 正常系 |
+| GRP-006 | test_group_keyword_multiple | `--filter-status added,deleted`で複数グループ | added-*とdeleted-*のみが表示される | 正常系 |
+
+---
+
+### 25. 三者間File Tree整列テスト
+
+| テストID | テスト名 | テスト内容 | 期待結果 | 分類 |
+|---------|---------|-----------|---------|------|
+| ALIGN-001 | test_three_way_summary_file_alignment | 三者間Summaryファイル整列 | 異なる長さのパスでもインジケータが同じ位置に揃う | 正常系 |
+| ALIGN-002 | test_three_way_summary_file_alignment_japanese | 三者間日本語ファイル名整列 | 日本語ファイル名でも表示幅でインジケータが揃う | 正常系 |
+| ALIGN-003 | test_three_way_file_tree_alignment | 三者間File Tree整列 | 異なる深さのファイルでもインジケータが同じ位置に揃う | 正常系 |
+
+---
+
 ## 変更履歴
 
 | 日付 | バージョン | 変更内容 |
 |------|-----------|---------|
 | 2026-01-21 | 1.0 | 初版作成 |
 | 2026-01-21 | 1.1 | パッチファイルテスト (PATCH-001〜010)、エッジケーステスト (EDGE-001〜005)、シンボリックリンクテスト (SYM-001〜003)、パーミッションテスト (PERM-001〜002)、Excelフォーマット詳細テスト (EXFMT-001〜010)、Filter statusテスト (FILT-001〜007)、統計テスト (STATS-001〜006)、Tree表示テスト (TREE-001〜005) を追加 |
+| 2026-01-21 | 1.2 | 不具合修正確認テスト (BUGFIX-001〜004) を追加：サマリーファイルのANSIエスケープコード問題、ステータス位置整列問題、Excel罫線問題の修正確認 |
+| 2026-01-21 | 1.3 | 三者間グループキーワードテスト (GRP-001〜006)、三者間File Tree整列テスト (ALIGN-001〜003) を追加 |

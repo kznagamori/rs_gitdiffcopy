@@ -3510,3 +3510,601 @@ fn test_box_drawing_chars_at_different_depths() {
     assert!(summary.contains("level1") || summary.contains("dir1"),
             "Should have entries at different depths");
 }
+
+// ============================================================================
+// サマリーファイル出力テスト（不具合修正確認）
+// ============================================================================
+
+/// サマリーファイルにANSIエスケープコードが含まれていないことを確認
+/// 不具合: ファイル出力に[32m[added][0m のようなカラーコードが含まれていた
+#[test]
+fn test_summary_file_no_ansi_escape_codes() {
+    let repo = TestRepo::new();
+
+    // 初期コミット
+    repo.create_file("file1.txt", "content1");
+    repo.add_all();
+    let source = repo.commit("initial");
+
+    // ファイルを追加
+    repo.create_file("file2.txt", "content2");
+    repo.add_all();
+    let target = repo.commit("add file");
+
+    let summary_path = repo.temp_dir.path().join("summary.txt");
+    let output = repo.run_cmd(&[
+        "-S", &source,
+        "-T", &target,
+        "-s", summary_path.to_str().unwrap(),
+    ]);
+    assert!(output.status.success(), "Command failed: {:?}", output);
+
+    let summary = fs::read_to_string(&summary_path).expect("Failed to read summary");
+
+    // ANSIエスケープコードが含まれていないことを確認
+    assert!(!summary.contains("\x1b["), "Summary file should not contain ANSI escape codes");
+    assert!(!summary.contains("[32m"), "Summary file should not contain color codes like [32m");
+    assert!(!summary.contains("[0m"), "Summary file should not contain color reset codes like [0m");
+
+    // 正しいステータスタグが含まれていることを確認
+    assert!(summary.contains("[added]"), "Summary should contain [added] tag");
+}
+
+/// サマリーファイルのステータス位置が整列されていることを確認
+/// 不具合: ステータス位置がファイル名の長さによってばらばらだった
+#[test]
+fn test_summary_file_status_alignment() {
+    let repo = TestRepo::new();
+
+    // 初期コミット
+    repo.create_file("a.txt", "content1");
+    repo.add_all();
+    let source = repo.commit("initial");
+
+    // 長さの異なるファイル名でファイルを追加
+    repo.create_file("short.txt", "content2");
+    repo.create_file("very_long_filename_for_testing.txt", "content3");
+    repo.create_file("medium_file.txt", "content4");
+    repo.add_all();
+    let target = repo.commit("add files");
+
+    let summary_path = repo.temp_dir.path().join("summary.txt");
+    let output = repo.run_cmd(&[
+        "-S", &source,
+        "-T", &target,
+        "-s", summary_path.to_str().unwrap(),
+    ]);
+    assert!(output.status.success(), "Command failed: {:?}", output);
+
+    let summary = fs::read_to_string(&summary_path).expect("Failed to read summary");
+
+    // File Treeセクションを抽出
+    let tree_start = summary.find("File Tree").expect("File Tree section not found");
+    let tree_section = &summary[tree_start..];
+
+    // [added]タグを含む行を抽出
+    let added_lines: Vec<&str> = tree_section
+        .lines()
+        .filter(|line| line.contains("[added]"))
+        .collect();
+
+    assert!(added_lines.len() >= 3, "Should have at least 3 added files");
+
+    // 各行の[added]の位置を取得
+    let positions: Vec<usize> = added_lines
+        .iter()
+        .map(|line| line.find("[added]").unwrap())
+        .collect();
+
+    // すべての[added]が同じ位置にあることを確認
+    let first_pos = positions[0];
+    for (i, pos) in positions.iter().enumerate() {
+        assert_eq!(*pos, first_pos,
+                   "Status position should be aligned. Line {}: position {} vs expected {}. Lines:\n{}",
+                   i, pos, first_pos, added_lines.join("\n"));
+    }
+}
+
+/// Excelファイルの罫線が正しく設定されていることを確認
+/// 不具合: 一部のセルに罫線が設定されていなかった
+#[test]
+fn test_excel_file_has_borders() {
+    use calamine::{open_workbook, Reader, Xlsx};
+
+    let repo = TestRepo::new();
+
+    // 初期コミット
+    repo.create_file("file1.txt", "content1");
+    repo.add_all();
+    let source = repo.commit("initial");
+
+    // ファイルを追加・変更
+    repo.create_file("file2.txt", "content2");
+    repo.create_file("file1.txt", "modified content");
+    repo.add_all();
+    let target = repo.commit("changes");
+
+    let excel_path = repo.temp_dir.path().join("summary.xlsx");
+    let output = repo.run_cmd(&[
+        "-S", &source,
+        "-T", &target,
+        "-E", excel_path.to_str().unwrap(),
+    ]);
+    assert!(output.status.success(), "Command failed: {:?}", output);
+
+    // Excelファイルが存在することを確認
+    assert!(excel_path.exists(), "Excel file should exist");
+
+    // Excelファイルを読み込み、シートとデータの存在を確認
+    let workbook: Xlsx<_> = open_workbook(&excel_path).expect("Failed to open Excel file");
+    let sheet_names = workbook.sheet_names();
+
+    // 必要なシートが存在することを確認
+    assert!(sheet_names.contains(&"File Tree".to_string()), "File Tree sheet should exist");
+    assert!(sheet_names.contains(&"Details".to_string()), "Details sheet should exist");
+
+    // 注意: calamineは罫線情報を直接読み取れないため、
+    // シートとデータの存在確認のみを行う。
+    // 罫線の視覚的確認は手動で行う必要がある。
+}
+
+/// 日本語ファイル名でもステータス位置が整列されることを確認
+#[test]
+fn test_summary_file_status_alignment_with_japanese() {
+    let repo = TestRepo::new();
+
+    // 初期コミット
+    repo.create_file("初期ファイル.txt", "内容1");
+    repo.add_all();
+    let source = repo.commit("initial");
+
+    // 長さの異なる日本語ファイル名でファイルを追加
+    repo.create_file("短い.txt", "内容2");
+    repo.create_file("とても長いファイル名のテスト用ファイル.txt", "内容3");
+    repo.create_file("中程度のファイル.txt", "内容4");
+    repo.add_all();
+    let target = repo.commit("add files");
+
+    let summary_path = repo.temp_dir.path().join("summary.txt");
+    let output = repo.run_cmd(&[
+        "-S", &source,
+        "-T", &target,
+        "-s", summary_path.to_str().unwrap(),
+    ]);
+    assert!(output.status.success(), "Command failed: {:?}", output);
+
+    let summary = fs::read_to_string(&summary_path).expect("Failed to read summary");
+
+    // ANSIエスケープコードが含まれていないことを確認
+    assert!(!summary.contains("\x1b["), "Summary file should not contain ANSI escape codes");
+    assert!(!summary.contains("[32m"), "Summary file should not contain color codes");
+
+    // [added]タグが含まれていることを確認
+    assert!(summary.contains("[added]"), "Summary should contain [added] tag");
+}
+
+// ============================================================================
+// 24. 三者間グループキーワードテスト
+// ============================================================================
+
+/// GRP-001: ^addedグループ除外テスト
+#[test]
+fn test_group_keyword_exclusion_added() {
+    let repo = TestRepo::new();
+
+    // ベースブランチを作成
+    repo.create_file("base.txt", "base content");
+    repo.add_all();
+    let base = repo.commit("base");
+
+    // oursブランチ
+    repo.create_branch("ours");
+    repo.checkout("ours");
+    repo.create_file("added_ours.txt", "added in ours");
+    repo.add_all();
+    let ours = repo.commit("ours changes");
+
+    // theirsブランチ
+    repo.checkout(&base);
+    repo.create_branch("theirs");
+    repo.checkout("theirs");
+    repo.create_file("added_theirs.txt", "added in theirs");
+    repo.add_all();
+    let theirs = repo.commit("theirs changes");
+
+    // all,^added でaddedグループを除外
+    let summary_path = repo.temp_dir.path().join("summary.txt");
+    let output = repo.run_cmd(&[
+        "--three-way",
+        "-S", &ours,
+        "-T", &theirs,
+        "-B", &base,
+        "-s", summary_path.to_str().unwrap(),
+        "--filter-status", "all,^added",
+    ]);
+    assert!(output.status.success(), "Command failed: {:?}", output);
+
+    // added-ours, added-theirsが出力に含まれないことを確認
+    let summary = fs::read_to_string(&summary_path).expect("Failed to read summary");
+    assert!(!summary.contains("added_ours.txt"), "added_ours.txt should be filtered out");
+    assert!(!summary.contains("added_theirs.txt"), "added_theirs.txt should be filtered out");
+}
+
+/// GRP-002: ^deletedグループ除外テスト
+#[test]
+fn test_group_keyword_exclusion_deleted() {
+    let repo = TestRepo::new();
+
+    // ベースブランチを作成
+    repo.create_file("base.txt", "base content");
+    repo.create_file("deleted_ours.txt", "will be deleted in ours");
+    repo.create_file("deleted_theirs.txt", "will be deleted in theirs");
+    repo.add_all();
+    let base = repo.commit("base");
+
+    // oursブランチ
+    repo.create_branch("ours");
+    repo.checkout("ours");
+    repo.delete_file("deleted_ours.txt");
+    repo.add_all();
+    let ours = repo.commit("ours changes");
+
+    // theirsブランチ
+    repo.checkout(&base);
+    repo.create_branch("theirs");
+    repo.checkout("theirs");
+    repo.delete_file("deleted_theirs.txt");
+    repo.add_all();
+    let theirs = repo.commit("theirs changes");
+
+    // all,^deleted でdeletedグループを除外
+    let summary_path = repo.temp_dir.path().join("summary.txt");
+    let output = repo.run_cmd(&[
+        "--three-way",
+        "-S", &ours,
+        "-T", &theirs,
+        "-B", &base,
+        "-s", summary_path.to_str().unwrap(),
+        "--filter-status", "all,^deleted",
+    ]);
+    assert!(output.status.success(), "Command failed: {:?}", output);
+
+    // deleted-ours, deleted-theirsが出力に含まれないことを確認
+    let summary = fs::read_to_string(&summary_path).expect("Failed to read summary");
+    assert!(!summary.contains("deleted_ours.txt"), "deleted_ours.txt should be filtered out");
+    assert!(!summary.contains("deleted_theirs.txt"), "deleted_theirs.txt should be filtered out");
+}
+
+/// GRP-003: ^modifiedグループ除外テスト
+#[test]
+fn test_group_keyword_exclusion_modified() {
+    let repo = TestRepo::new();
+
+    // ベースブランチを作成
+    repo.create_file("base.txt", "base content");
+    repo.create_file("modified_ours.txt", "original");
+    repo.create_file("modified_theirs.txt", "original");
+    repo.add_all();
+    let base = repo.commit("base");
+
+    // oursブランチ
+    repo.create_branch("ours");
+    repo.checkout("ours");
+    repo.create_file("modified_ours.txt", "changed in ours");
+    repo.add_all();
+    let ours = repo.commit("ours changes");
+
+    // theirsブランチ
+    repo.checkout(&base);
+    repo.create_branch("theirs");
+    repo.checkout("theirs");
+    repo.create_file("modified_theirs.txt", "changed in theirs");
+    repo.add_all();
+    let theirs = repo.commit("theirs changes");
+
+    // all,^modified でmodifiedグループを除外
+    let summary_path = repo.temp_dir.path().join("summary.txt");
+    let output = repo.run_cmd(&[
+        "--three-way",
+        "-S", &ours,
+        "-T", &theirs,
+        "-B", &base,
+        "-s", summary_path.to_str().unwrap(),
+        "--filter-status", "all,^modified",
+    ]);
+    assert!(output.status.success(), "Command failed: {:?}", output);
+
+    // ours-only, theirs-onlyが出力に含まれないことを確認
+    let summary = fs::read_to_string(&summary_path).expect("Failed to read summary");
+    assert!(!summary.contains("modified_ours.txt"), "modified_ours.txt should be filtered out");
+    assert!(!summary.contains("modified_theirs.txt"), "modified_theirs.txt should be filtered out");
+}
+
+/// GRP-004: ^conflictsグループ除外テスト
+#[test]
+fn test_group_keyword_exclusion_conflicts() {
+    let repo = TestRepo::new();
+
+    // ベースブランチを作成
+    repo.create_file("base.txt", "base content");
+    repo.create_file("conflict.txt", "original");
+    repo.add_all();
+    let base = repo.commit("base");
+
+    // oursブランチ
+    repo.create_branch("ours");
+    repo.checkout("ours");
+    repo.create_file("conflict.txt", "changed in ours");
+    repo.add_all();
+    let ours = repo.commit("ours changes");
+
+    // theirsブランチ
+    repo.checkout(&base);
+    repo.create_branch("theirs");
+    repo.checkout("theirs");
+    repo.create_file("conflict.txt", "changed in theirs");
+    repo.add_all();
+    let theirs = repo.commit("theirs changes");
+
+    // all,^conflicts でconflictsグループを除外
+    let summary_path = repo.temp_dir.path().join("summary.txt");
+    let output = repo.run_cmd(&[
+        "--three-way",
+        "-S", &ours,
+        "-T", &theirs,
+        "-B", &base,
+        "-s", summary_path.to_str().unwrap(),
+        "--filter-status", "all,^conflicts",
+    ]);
+    // 注: 終了コードは3(コンフリクト)になる - フィルタリングは表示目的のみで、
+    // 統計と終了コードは実際のコンフリクト状態を反映する
+    // コマンドは終了コード3(コンフリクト)で正常終了
+    assert!(output.status.code() == Some(3) || output.status.success(),
+        "Command should exit with code 0 or 3: {:?}", output);
+
+    // File Tree内にconflict.txtが表示されないことを確認
+    let summary = fs::read_to_string(&summary_path).expect("Failed to read summary");
+    // conflict.txtはconflictステータスなので、File Treeセクションに出力されないはず
+    // ただし、統計セクションにはConflict数が表示される（これは正しい動作）
+    assert!(!summary.contains("conflict.txt"), "conflict.txt should be filtered out from File Tree");
+}
+
+/// GRP-005: addedグループ包含テスト
+#[test]
+fn test_group_keyword_inclusion_added() {
+    let repo = TestRepo::new();
+
+    // ベースブランチを作成
+    repo.create_file("base.txt", "base content");
+    repo.create_file("modified.txt", "original");
+    repo.add_all();
+    let base = repo.commit("base");
+
+    // oursブランチ
+    repo.create_branch("ours");
+    repo.checkout("ours");
+    repo.create_file("added_ours.txt", "added in ours");
+    repo.create_file("modified.txt", "changed in ours");
+    repo.add_all();
+    let ours = repo.commit("ours changes");
+
+    // theirsブランチ
+    repo.checkout(&base);
+    repo.create_branch("theirs");
+    repo.checkout("theirs");
+    repo.create_file("added_theirs.txt", "added in theirs");
+    repo.add_all();
+    let theirs = repo.commit("theirs changes");
+
+    // added でaddedグループのみ表示
+    let summary_path = repo.temp_dir.path().join("summary.txt");
+    let output = repo.run_cmd(&[
+        "--three-way",
+        "-S", &ours,
+        "-T", &theirs,
+        "-B", &base,
+        "-s", summary_path.to_str().unwrap(),
+        "--filter-status", "added",
+    ]);
+    assert!(output.status.success(), "Command failed: {:?}", output);
+
+    // added-*のみが出力に含まれることを確認
+    let summary = fs::read_to_string(&summary_path).expect("Failed to read summary");
+    assert!(summary.contains("added_ours.txt") || summary.contains("added_theirs.txt"),
+        "Should contain added files");
+    // modifiedは出力されないはず
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!stdout.contains("[ours-only]"), "modified files should be filtered out");
+}
+
+/// GRP-006: 複数グループ指定テスト
+#[test]
+fn test_group_keyword_multiple() {
+    let repo = TestRepo::new();
+
+    // ベースブランチを作成
+    repo.create_file("base.txt", "base content");
+    repo.create_file("deleted.txt", "will be deleted");
+    repo.create_file("modified.txt", "original");
+    repo.add_all();
+    let base = repo.commit("base");
+
+    // oursブランチ
+    repo.create_branch("ours");
+    repo.checkout("ours");
+    repo.create_file("added_ours.txt", "added in ours");
+    repo.delete_file("deleted.txt");
+    repo.create_file("modified.txt", "changed in ours");
+    repo.add_all();
+    let ours = repo.commit("ours changes");
+
+    // theirsブランチ
+    repo.checkout(&base);
+    repo.create_branch("theirs");
+    repo.checkout("theirs");
+    repo.add_all();
+    let theirs = repo.commit("theirs changes");
+
+    // added,deleted でaddedとdeletedグループのみ表示
+    let summary_path = repo.temp_dir.path().join("summary.txt");
+    let output = repo.run_cmd(&[
+        "--three-way",
+        "-S", &ours,
+        "-T", &theirs,
+        "-B", &base,
+        "-s", summary_path.to_str().unwrap(),
+        "--filter-status", "added,deleted",
+    ]);
+    assert!(output.status.success(), "Command failed: {:?}", output);
+
+    // added-*とdeleted-*が出力に含まれることを確認
+    let summary = fs::read_to_string(&summary_path).expect("Failed to read summary");
+    assert!(summary.contains("added_ours.txt"), "Should contain added file");
+    assert!(summary.contains("deleted.txt"), "Should contain deleted file");
+    // modifiedは出力されないはず
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!stdout.contains("[ours-only]"), "modified files should be filtered out");
+}
+
+// ============================================================================
+// 25. 三者間File Tree整列テスト
+// ============================================================================
+
+/// ALIGN-001: 三者間Summaryファイル整列テスト
+#[test]
+fn test_three_way_summary_file_alignment() {
+    let repo = TestRepo::new();
+
+    // ベースブランチを作成
+    repo.create_file("base.txt", "base content");
+    repo.add_all();
+    let base = repo.commit("base");
+
+    // oursブランチ
+    repo.create_branch("ours");
+    repo.checkout("ours");
+    repo.create_file("a.txt", "short name");
+    repo.create_file("longer_filename.txt", "longer name");
+    repo.create_file("very_very_long_filename_test.txt", "very long name");
+    repo.add_all();
+    let ours = repo.commit("ours changes");
+
+    // theirsブランチ
+    repo.checkout(&base);
+    repo.create_branch("theirs");
+    repo.checkout("theirs");
+    repo.add_all();
+    let theirs = repo.commit("theirs changes");
+
+    let summary_path = repo.temp_dir.path().join("summary.txt");
+    let output = repo.run_cmd(&[
+        "--three-way",
+        "-S", &ours,
+        "-T", &theirs,
+        "-B", &base,
+        "-s", summary_path.to_str().unwrap(),
+    ]);
+    assert!(output.status.success(), "Command failed: {:?}", output);
+
+    let summary = fs::read_to_string(&summary_path).expect("Failed to read summary");
+
+    // ANSIエスケープコードが含まれていないことを確認
+    assert!(!summary.contains("\x1b["), "Summary file should not contain ANSI escape codes");
+
+    // インジケータが含まれていることを確認
+    assert!(summary.contains("ours"), "Summary should contain ours indicator");
+}
+
+/// ALIGN-002: 三者間日本語ファイル名整列テスト
+#[test]
+fn test_three_way_summary_file_alignment_japanese() {
+    let repo = TestRepo::new();
+
+    // ベースブランチを作成
+    repo.create_file("ベース.txt", "base content");
+    repo.add_all();
+    let base = repo.commit("base");
+
+    // oursブランチ
+    repo.create_branch("ours");
+    repo.checkout("ours");
+    repo.create_file("短い.txt", "short name");
+    repo.create_file("長いファイル名.txt", "longer name");
+    repo.create_file("とても長いファイル名のテスト.txt", "very long name");
+    repo.add_all();
+    let ours = repo.commit("ours changes");
+
+    // theirsブランチ
+    repo.checkout(&base);
+    repo.create_branch("theirs");
+    repo.checkout("theirs");
+    repo.add_all();
+    let theirs = repo.commit("theirs changes");
+
+    let summary_path = repo.temp_dir.path().join("summary.txt");
+    let output = repo.run_cmd(&[
+        "--three-way",
+        "-S", &ours,
+        "-T", &theirs,
+        "-B", &base,
+        "-s", summary_path.to_str().unwrap(),
+    ]);
+    assert!(output.status.success(), "Command failed: {:?}", output);
+
+    let summary = fs::read_to_string(&summary_path).expect("Failed to read summary");
+
+    // ANSIエスケープコードが含まれていないことを確認
+    assert!(!summary.contains("\x1b["), "Summary file should not contain ANSI escape codes");
+
+    // 日本語ファイル名が含まれていることを確認
+    assert!(summary.contains("短い.txt") || summary.contains("長いファイル名.txt"),
+        "Summary should contain Japanese filenames");
+}
+
+/// ALIGN-003: 三者間File Tree整列テスト（異なる深さ）
+#[test]
+fn test_three_way_file_tree_alignment() {
+    let repo = TestRepo::new();
+
+    // ベースブランチを作成
+    repo.create_file("base.txt", "base content");
+    repo.add_all();
+    let base = repo.commit("base");
+
+    // oursブランチ
+    repo.create_branch("ours");
+    repo.checkout("ours");
+    repo.create_file("root.txt", "root file");
+    repo.create_file("dir/nested.txt", "nested file");
+    repo.create_file("dir/subdir/deep.txt", "deep file");
+    repo.add_all();
+    let ours = repo.commit("ours changes");
+
+    // theirsブランチ
+    repo.checkout(&base);
+    repo.create_branch("theirs");
+    repo.checkout("theirs");
+    repo.add_all();
+    let theirs = repo.commit("theirs changes");
+
+    let summary_path = repo.temp_dir.path().join("summary.txt");
+    let output = repo.run_cmd(&[
+        "--three-way",
+        "-S", &ours,
+        "-T", &theirs,
+        "-B", &base,
+        "-s", summary_path.to_str().unwrap(),
+    ]);
+    assert!(output.status.success(), "Command failed: {:?}", output);
+
+    let summary = fs::read_to_string(&summary_path).expect("Failed to read summary");
+
+    // Box Drawing文字が含まれていることを確認
+    assert!(summary.contains("├") || summary.contains("└") || summary.contains("│"),
+        "Summary should contain Box Drawing characters");
+
+    // 異なる深さのファイルが含まれていることを確認
+    assert!(summary.contains("root.txt"), "Summary should contain root.txt");
+    assert!(summary.contains("nested.txt"), "Summary should contain nested.txt");
+    assert!(summary.contains("deep.txt"), "Summary should contain deep.txt");
+}

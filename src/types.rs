@@ -140,6 +140,170 @@ impl ThreeWayStatus {
             Self::DeleteModify => "[○DM]",
         }
     }
+
+    /// フィルター文字列からステータスを解析（三者間用）
+    pub fn from_filter_str(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "unchanged" | "same" => Some(Self::Unchanged),
+            "ours-only" | "ours_only" | "oursonly" => Some(Self::OursOnly),
+            "theirs-only" | "theirs_only" | "theirsonly" => Some(Self::TheirsOnly),
+            "both-same" | "both_same" | "bothsame" => Some(Self::BothSame),
+            "conflict" => Some(Self::Conflict),
+            "added-ours" | "added_ours" | "addedours" => Some(Self::AddedOurs),
+            "added-theirs" | "added_theirs" | "addedtheirs" => Some(Self::AddedTheirs),
+            "added-both-same" | "added_both_same" | "addedbothsame" => Some(Self::AddedBothSame),
+            "added-both-diff" | "added_both_diff" | "addedbothdiff" => Some(Self::AddedBothDiff),
+            "deleted-ours" | "deleted_ours" | "deletedours" => Some(Self::DeletedOurs),
+            "deleted-theirs" | "deleted_theirs" | "deletedtheirs" => Some(Self::DeletedTheirs),
+            "deleted-both" | "deleted_both" | "deletedboth" => Some(Self::DeletedBoth),
+            "modify-delete" | "modify_delete" | "modifydelete" => Some(Self::ModifyDelete),
+            "delete-modify" | "delete_modify" | "deletemodify" => Some(Self::DeleteModify),
+            _ => None,
+        }
+    }
+
+    /// 全ステータスのリストを取得
+    pub fn all() -> Vec<Self> {
+        vec![
+            Self::Unchanged,
+            Self::OursOnly,
+            Self::TheirsOnly,
+            Self::BothSame,
+            Self::Conflict,
+            Self::AddedOurs,
+            Self::AddedTheirs,
+            Self::AddedBothSame,
+            Self::AddedBothDiff,
+            Self::DeletedOurs,
+            Self::DeletedTheirs,
+            Self::DeletedBoth,
+            Self::ModifyDelete,
+            Self::DeleteModify,
+        ]
+    }
+}
+
+/// グループキーワードの定義（三者間モード用）
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FilterGroup {
+    /// added グループ: added-ours, added-theirs, added-both-same, added-both-diff
+    Added,
+    /// modified グループ: ours-only, theirs-only, both-same, conflict
+    Modified,
+    /// deleted グループ: deleted-ours, deleted-theirs, deleted-both
+    Deleted,
+    /// conflicts グループ: conflict, added-both-diff, modify-delete, delete-modify
+    Conflicts,
+    /// all: 全ステータス
+    All,
+}
+
+impl FilterGroup {
+    /// グループ名からFilterGroupを解析
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "added" => Some(Self::Added),
+            "modified" => Some(Self::Modified),
+            "deleted" => Some(Self::Deleted),
+            "conflicts" => Some(Self::Conflicts),
+            "all" => Some(Self::All),
+            _ => None,
+        }
+    }
+
+    /// グループに含まれるThreeWayStatusを取得
+    pub fn expand(&self) -> Vec<ThreeWayStatus> {
+        match self {
+            Self::Added => vec![
+                ThreeWayStatus::AddedOurs,
+                ThreeWayStatus::AddedTheirs,
+                ThreeWayStatus::AddedBothSame,
+                ThreeWayStatus::AddedBothDiff,
+            ],
+            Self::Modified => vec![
+                ThreeWayStatus::OursOnly,
+                ThreeWayStatus::TheirsOnly,
+                ThreeWayStatus::BothSame,
+                ThreeWayStatus::Conflict,
+            ],
+            Self::Deleted => vec![
+                ThreeWayStatus::DeletedOurs,
+                ThreeWayStatus::DeletedTheirs,
+                ThreeWayStatus::DeletedBoth,
+            ],
+            Self::Conflicts => vec![
+                ThreeWayStatus::Conflict,
+                ThreeWayStatus::AddedBothDiff,
+                ThreeWayStatus::ModifyDelete,
+                ThreeWayStatus::DeleteModify,
+            ],
+            Self::All => ThreeWayStatus::all(),
+        }
+    }
+}
+
+/// filter_status文字列を展開してThreeWayStatusのセットに変換
+///
+/// # 引数
+/// - `filter_status`: filter_status文字列のリスト（例: ["added", "^deleted"]）
+///
+/// # 戻り値
+/// - 含めるべきThreeWayStatusのセット
+///
+/// # 動作
+/// - グループキーワード（added, modified, deleted, conflicts, all）は展開される
+/// - `^`プレフィックスは除外を意味する
+/// - 除外のみの場合、暗黙的にallが適用される
+pub fn expand_filter_status_three_way(filter_status: &[String]) -> std::collections::HashSet<ThreeWayStatus> {
+    use std::collections::HashSet;
+
+    if filter_status.is_empty() {
+        // フィルタ未指定の場合は全て含める
+        return ThreeWayStatus::all().into_iter().collect();
+    }
+
+    let mut include: HashSet<ThreeWayStatus> = HashSet::new();
+    let mut exclude: HashSet<ThreeWayStatus> = HashSet::new();
+    let mut has_include = false;
+
+    for s in filter_status {
+        let trimmed = s.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let (is_exclude, keyword) = if let Some(stripped) = trimmed.strip_prefix('^') {
+            (true, stripped)
+        } else {
+            (false, trimmed)
+        };
+
+        // グループキーワードか個別ステータスかを判定
+        let statuses: Vec<ThreeWayStatus> = if let Some(group) = FilterGroup::from_str(keyword) {
+            group.expand()
+        } else if let Some(status) = ThreeWayStatus::from_filter_str(keyword) {
+            vec![status]
+        } else {
+            // 二者間用のステータス（added, modified, deleted等）は三者間では無視
+            // または不明なキーワードは無視
+            continue;
+        };
+
+        if is_exclude {
+            exclude.extend(statuses);
+        } else {
+            has_include = true;
+            include.extend(statuses);
+        }
+    }
+
+    // 除外のみの場合は暗黙的にallを適用
+    if !has_include && !exclude.is_empty() {
+        include = ThreeWayStatus::all().into_iter().collect();
+    }
+
+    // 除外を適用
+    include.difference(&exclude).cloned().collect()
 }
 
 /// 差分ファイル情報
@@ -676,5 +840,211 @@ mod tests {
         stats.delete_modify = 1;
 
         assert_eq!(stats.conflicts(), 5);
+    }
+
+    // ========================================
+    // ThreeWayStatus::from_filter_strテスト
+    // ========================================
+
+    #[test]
+    fn test_three_way_status_from_filter_str() {
+        // 完全一致（kebab-case）
+        assert_eq!(ThreeWayStatus::from_filter_str("unchanged"), Some(ThreeWayStatus::Unchanged));
+        assert_eq!(ThreeWayStatus::from_filter_str("ours-only"), Some(ThreeWayStatus::OursOnly));
+        assert_eq!(ThreeWayStatus::from_filter_str("theirs-only"), Some(ThreeWayStatus::TheirsOnly));
+        assert_eq!(ThreeWayStatus::from_filter_str("both-same"), Some(ThreeWayStatus::BothSame));
+        assert_eq!(ThreeWayStatus::from_filter_str("conflict"), Some(ThreeWayStatus::Conflict));
+        assert_eq!(ThreeWayStatus::from_filter_str("added-ours"), Some(ThreeWayStatus::AddedOurs));
+        assert_eq!(ThreeWayStatus::from_filter_str("added-theirs"), Some(ThreeWayStatus::AddedTheirs));
+        assert_eq!(ThreeWayStatus::from_filter_str("added-both-same"), Some(ThreeWayStatus::AddedBothSame));
+        assert_eq!(ThreeWayStatus::from_filter_str("added-both-diff"), Some(ThreeWayStatus::AddedBothDiff));
+        assert_eq!(ThreeWayStatus::from_filter_str("deleted-ours"), Some(ThreeWayStatus::DeletedOurs));
+        assert_eq!(ThreeWayStatus::from_filter_str("deleted-theirs"), Some(ThreeWayStatus::DeletedTheirs));
+        assert_eq!(ThreeWayStatus::from_filter_str("deleted-both"), Some(ThreeWayStatus::DeletedBoth));
+        assert_eq!(ThreeWayStatus::from_filter_str("modify-delete"), Some(ThreeWayStatus::ModifyDelete));
+        assert_eq!(ThreeWayStatus::from_filter_str("delete-modify"), Some(ThreeWayStatus::DeleteModify));
+    }
+
+    #[test]
+    fn test_three_way_status_from_filter_str_case_insensitive() {
+        assert_eq!(ThreeWayStatus::from_filter_str("OURS-ONLY"), Some(ThreeWayStatus::OursOnly));
+        assert_eq!(ThreeWayStatus::from_filter_str("Ours-Only"), Some(ThreeWayStatus::OursOnly));
+        assert_eq!(ThreeWayStatus::from_filter_str("CONFLICT"), Some(ThreeWayStatus::Conflict));
+    }
+
+    #[test]
+    fn test_three_way_status_from_filter_str_underscore() {
+        // アンダースコア形式
+        assert_eq!(ThreeWayStatus::from_filter_str("ours_only"), Some(ThreeWayStatus::OursOnly));
+        assert_eq!(ThreeWayStatus::from_filter_str("added_ours"), Some(ThreeWayStatus::AddedOurs));
+        assert_eq!(ThreeWayStatus::from_filter_str("deleted_both"), Some(ThreeWayStatus::DeletedBoth));
+    }
+
+    #[test]
+    fn test_three_way_status_from_filter_str_invalid() {
+        assert_eq!(ThreeWayStatus::from_filter_str("invalid"), None);
+        assert_eq!(ThreeWayStatus::from_filter_str(""), None);
+        assert_eq!(ThreeWayStatus::from_filter_str("added"), None); // グループキーワードはfrom_filter_strでは無効
+    }
+
+    #[test]
+    fn test_three_way_status_all() {
+        let all = ThreeWayStatus::all();
+        assert_eq!(all.len(), 14);
+        assert!(all.contains(&ThreeWayStatus::Unchanged));
+        assert!(all.contains(&ThreeWayStatus::Conflict));
+        assert!(all.contains(&ThreeWayStatus::AddedOurs));
+        assert!(all.contains(&ThreeWayStatus::DeleteModify));
+    }
+
+    // ========================================
+    // FilterGroupテスト
+    // ========================================
+
+    #[test]
+    fn test_filter_group_from_str() {
+        assert_eq!(FilterGroup::from_str("added"), Some(FilterGroup::Added));
+        assert_eq!(FilterGroup::from_str("modified"), Some(FilterGroup::Modified));
+        assert_eq!(FilterGroup::from_str("deleted"), Some(FilterGroup::Deleted));
+        assert_eq!(FilterGroup::from_str("conflicts"), Some(FilterGroup::Conflicts));
+        assert_eq!(FilterGroup::from_str("all"), Some(FilterGroup::All));
+        assert_eq!(FilterGroup::from_str("ADDED"), Some(FilterGroup::Added));
+        assert_eq!(FilterGroup::from_str("invalid"), None);
+    }
+
+    #[test]
+    fn test_filter_group_expand_added() {
+        let statuses = FilterGroup::Added.expand();
+        assert_eq!(statuses.len(), 4);
+        assert!(statuses.contains(&ThreeWayStatus::AddedOurs));
+        assert!(statuses.contains(&ThreeWayStatus::AddedTheirs));
+        assert!(statuses.contains(&ThreeWayStatus::AddedBothSame));
+        assert!(statuses.contains(&ThreeWayStatus::AddedBothDiff));
+    }
+
+    #[test]
+    fn test_filter_group_expand_modified() {
+        let statuses = FilterGroup::Modified.expand();
+        assert_eq!(statuses.len(), 4);
+        assert!(statuses.contains(&ThreeWayStatus::OursOnly));
+        assert!(statuses.contains(&ThreeWayStatus::TheirsOnly));
+        assert!(statuses.contains(&ThreeWayStatus::BothSame));
+        assert!(statuses.contains(&ThreeWayStatus::Conflict));
+    }
+
+    #[test]
+    fn test_filter_group_expand_deleted() {
+        let statuses = FilterGroup::Deleted.expand();
+        assert_eq!(statuses.len(), 3);
+        assert!(statuses.contains(&ThreeWayStatus::DeletedOurs));
+        assert!(statuses.contains(&ThreeWayStatus::DeletedTheirs));
+        assert!(statuses.contains(&ThreeWayStatus::DeletedBoth));
+    }
+
+    #[test]
+    fn test_filter_group_expand_conflicts() {
+        let statuses = FilterGroup::Conflicts.expand();
+        assert_eq!(statuses.len(), 4);
+        assert!(statuses.contains(&ThreeWayStatus::Conflict));
+        assert!(statuses.contains(&ThreeWayStatus::AddedBothDiff));
+        assert!(statuses.contains(&ThreeWayStatus::ModifyDelete));
+        assert!(statuses.contains(&ThreeWayStatus::DeleteModify));
+    }
+
+    #[test]
+    fn test_filter_group_expand_all() {
+        let statuses = FilterGroup::All.expand();
+        assert_eq!(statuses.len(), 14);
+    }
+
+    // ========================================
+    // expand_filter_status_three_wayテスト
+    // ========================================
+
+    #[test]
+    fn test_expand_filter_status_three_way_empty() {
+        let result = expand_filter_status_three_way(&[]);
+        assert_eq!(result.len(), 14); // 全ステータス
+    }
+
+    #[test]
+    fn test_expand_filter_status_three_way_single_status() {
+        let result = expand_filter_status_three_way(&["conflict".to_string()]);
+        assert_eq!(result.len(), 1);
+        assert!(result.contains(&ThreeWayStatus::Conflict));
+    }
+
+    #[test]
+    fn test_expand_filter_status_three_way_group_added() {
+        let result = expand_filter_status_three_way(&["added".to_string()]);
+        assert_eq!(result.len(), 4);
+        assert!(result.contains(&ThreeWayStatus::AddedOurs));
+        assert!(result.contains(&ThreeWayStatus::AddedTheirs));
+        assert!(result.contains(&ThreeWayStatus::AddedBothSame));
+        assert!(result.contains(&ThreeWayStatus::AddedBothDiff));
+    }
+
+    #[test]
+    fn test_expand_filter_status_three_way_group_conflicts() {
+        let result = expand_filter_status_three_way(&["conflicts".to_string()]);
+        assert_eq!(result.len(), 4);
+        assert!(result.contains(&ThreeWayStatus::Conflict));
+        assert!(result.contains(&ThreeWayStatus::AddedBothDiff));
+        assert!(result.contains(&ThreeWayStatus::ModifyDelete));
+        assert!(result.contains(&ThreeWayStatus::DeleteModify));
+    }
+
+    #[test]
+    fn test_expand_filter_status_three_way_exclude() {
+        // ^added: 全ステータスからaddedグループを除外
+        let result = expand_filter_status_three_way(&["^added".to_string()]);
+        assert_eq!(result.len(), 10); // 14 - 4 = 10
+        assert!(!result.contains(&ThreeWayStatus::AddedOurs));
+        assert!(!result.contains(&ThreeWayStatus::AddedTheirs));
+        assert!(!result.contains(&ThreeWayStatus::AddedBothSame));
+        assert!(!result.contains(&ThreeWayStatus::AddedBothDiff));
+        assert!(result.contains(&ThreeWayStatus::Unchanged));
+        assert!(result.contains(&ThreeWayStatus::Conflict));
+    }
+
+    #[test]
+    fn test_expand_filter_status_three_way_all_exclude() {
+        // all,^deleted: 全ステータスからdeletedグループを除外
+        let result = expand_filter_status_three_way(&["all".to_string(), "^deleted".to_string()]);
+        assert_eq!(result.len(), 11); // 14 - 3 = 11
+        assert!(!result.contains(&ThreeWayStatus::DeletedOurs));
+        assert!(!result.contains(&ThreeWayStatus::DeletedTheirs));
+        assert!(!result.contains(&ThreeWayStatus::DeletedBoth));
+    }
+
+    #[test]
+    fn test_expand_filter_status_three_way_multiple_groups() {
+        // added,modified: addedとmodifiedグループ
+        let result = expand_filter_status_three_way(&["added".to_string(), "modified".to_string()]);
+        assert_eq!(result.len(), 8); // 4 + 4 = 8
+        assert!(result.contains(&ThreeWayStatus::AddedOurs));
+        assert!(result.contains(&ThreeWayStatus::OursOnly));
+    }
+
+    #[test]
+    fn test_expand_filter_status_three_way_exclude_conflicts() {
+        // all,^conflicts: コンフリクトを除外
+        let result = expand_filter_status_three_way(&["all".to_string(), "^conflicts".to_string()]);
+        assert_eq!(result.len(), 10); // 14 - 4 = 10
+        assert!(!result.contains(&ThreeWayStatus::Conflict));
+        assert!(!result.contains(&ThreeWayStatus::AddedBothDiff));
+        assert!(!result.contains(&ThreeWayStatus::ModifyDelete));
+        assert!(!result.contains(&ThreeWayStatus::DeleteModify));
+    }
+
+    #[test]
+    fn test_expand_filter_status_three_way_mixed_include_exclude() {
+        // added,^added-both-diff: addedグループからadded-both-diffを除外
+        let result = expand_filter_status_three_way(&["added".to_string(), "^added-both-diff".to_string()]);
+        assert_eq!(result.len(), 3); // 4 - 1 = 3
+        assert!(result.contains(&ThreeWayStatus::AddedOurs));
+        assert!(result.contains(&ThreeWayStatus::AddedTheirs));
+        assert!(result.contains(&ThreeWayStatus::AddedBothSame));
+        assert!(!result.contains(&ThreeWayStatus::AddedBothDiff));
     }
 }

@@ -3,7 +3,7 @@
 use crate::config::MergedConfig;
 use crate::error::Result;
 use crate::git::Git;
-use crate::types::{DiffFile, FileStatus, MergeStyle, ThreeWayDiffFile, ThreeWayStatus};
+use crate::types::{expand_filter_status_three_way, DiffFile, FileStatus, MergeStyle, ThreeWayDiffFile, ThreeWayStatus};
 use chrono::DateTime;
 use filetime::FileTime;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -106,6 +106,29 @@ impl<'a> FileCopier<'a> {
             FileStatus::Unchanged => false,
             _ => true,
         }
+    }
+
+    /// 三者間比較でファイルをコピーすべきかどうか
+    fn should_copy_three_way(&self, file: &ThreeWayDiffFile) -> bool {
+        // conflict_onlyモードの場合、コンフリクトファイルのみ
+        if self.config.conflict_only && !file.status.is_conflict() {
+            return false;
+        }
+
+        // filter_statusが指定されている場合、展開してフィルタリング
+        if !self.config.filter_status.is_empty() {
+            let allowed_statuses = expand_filter_status_three_way(&self.config.filter_status);
+            if !allowed_statuses.contains(&file.status) {
+                return false;
+            }
+        }
+
+        // Unchangedはコピーしない（show_unchangedオプションとは別）
+        if file.status == ThreeWayStatus::Unchanged {
+            return false;
+        }
+
+        true
     }
 
     /// 単一ファイルをコピー
@@ -264,7 +287,13 @@ impl<'a> FileCopier<'a> {
         let copied_count = Mutex::new(0usize);
         let errors = Mutex::new(Vec::new());
 
-        files.par_iter().for_each(|file| {
+        // filter_statusに基づいてフィルタリング
+        let files_to_copy: Vec<_> = files
+            .iter()
+            .filter(|f| self.should_copy_three_way(f))
+            .collect();
+
+        files_to_copy.par_iter().for_each(|file| {
             let result = self.copy_three_way_file(
                 file,
                 base_commit,
@@ -444,10 +473,109 @@ impl<'a> FileCopier<'a> {
     }
 
     /// ファイル名に拡張子を追加
-    fn add_extension(path: &Path, ext: &str) -> PathBuf {
+    pub fn add_extension(path: &Path, ext: &str) -> PathBuf {
         let mut new_path = path.as_os_str().to_os_string();
         new_path.push(".");
         new_path.push(ext);
         PathBuf::from(new_path)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // add_extension のテスト
+    #[test]
+    fn test_add_extension_simple() {
+        let path = Path::new("file.txt");
+        let result = FileCopier::add_extension(path, "old");
+        assert_eq!(result, PathBuf::from("file.txt.old"));
+    }
+
+    #[test]
+    fn test_add_extension_with_path() {
+        let path = Path::new("path/to/file.txt");
+        let result = FileCopier::add_extension(path, "new");
+        assert_eq!(result, PathBuf::from("path/to/file.txt.new"));
+    }
+
+    #[test]
+    fn test_add_extension_deleted() {
+        let path = Path::new("config.toml");
+        let result = FileCopier::add_extension(path, "deleted");
+        assert_eq!(result, PathBuf::from("config.toml.deleted"));
+    }
+
+    #[test]
+    fn test_add_extension_no_original_extension() {
+        let path = Path::new("Makefile");
+        let result = FileCopier::add_extension(path, "old");
+        assert_eq!(result, PathBuf::from("Makefile.old"));
+    }
+
+    #[test]
+    fn test_add_extension_dotfile() {
+        let path = Path::new(".gitignore");
+        let result = FileCopier::add_extension(path, "old");
+        assert_eq!(result, PathBuf::from(".gitignore.old"));
+    }
+
+    #[test]
+    fn test_add_extension_double_extension() {
+        let path = Path::new("archive.tar.gz");
+        let result = FileCopier::add_extension(path, "old");
+        assert_eq!(result, PathBuf::from("archive.tar.gz.old"));
+    }
+
+    #[test]
+    fn test_add_extension_japanese_filename() {
+        let path = Path::new("日本語/ファイル.txt");
+        let result = FileCopier::add_extension(path, "old");
+        assert_eq!(result, PathBuf::from("日本語/ファイル.txt.old"));
+    }
+
+    #[test]
+    fn test_add_extension_base() {
+        let path = Path::new("conflict_file.rs");
+        let result = FileCopier::add_extension(path, "base");
+        assert_eq!(result, PathBuf::from("conflict_file.rs.base"));
+    }
+
+    #[test]
+    fn test_add_extension_ours() {
+        let path = Path::new("conflict_file.rs");
+        let result = FileCopier::add_extension(path, "ours");
+        assert_eq!(result, PathBuf::from("conflict_file.rs.ours"));
+    }
+
+    #[test]
+    fn test_add_extension_theirs() {
+        let path = Path::new("conflict_file.rs");
+        let result = FileCopier::add_extension(path, "theirs");
+        assert_eq!(result, PathBuf::from("conflict_file.rs.theirs"));
+    }
+
+    // ThreeWayStatus::is_conflict のテスト
+    #[test]
+    fn test_three_way_status_is_conflict_true() {
+        assert!(ThreeWayStatus::Conflict.is_conflict());
+        assert!(ThreeWayStatus::AddedBothDiff.is_conflict());
+        assert!(ThreeWayStatus::ModifyDelete.is_conflict());
+        assert!(ThreeWayStatus::DeleteModify.is_conflict());
+    }
+
+    #[test]
+    fn test_three_way_status_is_conflict_false() {
+        assert!(!ThreeWayStatus::Unchanged.is_conflict());
+        assert!(!ThreeWayStatus::OursOnly.is_conflict());
+        assert!(!ThreeWayStatus::TheirsOnly.is_conflict());
+        assert!(!ThreeWayStatus::BothSame.is_conflict());
+        assert!(!ThreeWayStatus::AddedOurs.is_conflict());
+        assert!(!ThreeWayStatus::AddedTheirs.is_conflict());
+        assert!(!ThreeWayStatus::AddedBothSame.is_conflict());
+        assert!(!ThreeWayStatus::DeletedOurs.is_conflict());
+        assert!(!ThreeWayStatus::DeletedTheirs.is_conflict());
+        assert!(!ThreeWayStatus::DeletedBoth.is_conflict());
     }
 }

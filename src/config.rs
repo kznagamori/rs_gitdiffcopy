@@ -402,3 +402,313 @@ impl MergedConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn create_minimal_cli() -> Cli {
+        Cli {
+            source: Some("main".to_string()),
+            target: Some("develop".to_string()),
+            output: Some(PathBuf::from("/tmp/output")),
+            repository: None,
+            full_clone: false,
+            cache_dir: None,
+            config: None,
+            git_path: None,
+            exclude: vec![],
+            force: false,
+            summary: None,
+            verbose: false,
+            dry_run: false,
+            both_versions: false,
+            check_permissions: PermissionCheckMode::None,
+            patch: false,
+            patch_file: None,
+            excel: None,
+            excel_fold_level: None,
+            show_unchanged: false,
+            save_config: None,
+            filter_status: vec![],
+            stats_only: false,
+            no_tree: false,
+            no_details: false,
+            copy_deleted: false,
+            preserve_timestamps: false,
+            workers: None,
+            temp_dir: None,
+            color: ColorMode::Auto,
+            log_level: LogLevel::Warn,
+            three_way: false,
+            base: None,
+            merge_style: MergeStyle::All,
+            conflict_only: false,
+        }
+    }
+
+    #[test]
+    fn test_input_config_parse_basic_toml() {
+        let toml_content = r#"
+            source = "main"
+            target = "develop"
+            output = "/tmp/output"
+        "#;
+        let config: InputConfig = toml::from_str(toml_content).unwrap();
+        assert_eq!(config.source, Some("main".to_string()));
+        assert_eq!(config.target, Some("develop".to_string()));
+        assert_eq!(config.output, Some(PathBuf::from("/tmp/output")));
+    }
+
+    #[test]
+    fn test_input_config_parse_with_exclude() {
+        let toml_content = r#"
+            source = "main"
+            target = "develop"
+            output = "/tmp/output"
+            exclude = ["*.log", "node_modules/**"]
+        "#;
+        let config: InputConfig = toml::from_str(toml_content).unwrap();
+        assert_eq!(config.exclude.len(), 2);
+        assert_eq!(config.exclude[0], "*.log");
+        assert_eq!(config.exclude[1], "node_modules/**");
+    }
+
+    #[test]
+    fn test_input_config_parse_with_filter_status() {
+        let toml_content = r#"
+            source = "main"
+            target = "develop"
+            output = "/tmp/output"
+            filter_status = ["added", "modified"]
+        "#;
+        let config: InputConfig = toml::from_str(toml_content).unwrap();
+        assert_eq!(config.filter_status.len(), 2);
+        assert_eq!(config.filter_status[0], "added");
+        assert_eq!(config.filter_status[1], "modified");
+    }
+
+    #[test]
+    fn test_input_config_parse_three_way_mode() {
+        let toml_content = r#"
+            source = "feature/ours"
+            target = "feature/theirs"
+            output = "/tmp/output"
+            three_way = true
+            base = "main"
+            merge_style = "ours"
+            conflict_only = true
+        "#;
+        let config: InputConfig = toml::from_str(toml_content).unwrap();
+        assert_eq!(config.three_way, Some(true));
+        assert_eq!(config.base, Some("main".to_string()));
+        assert_eq!(config.merge_style, Some(MergeStyle::Ours));
+        assert_eq!(config.conflict_only, Some(true));
+    }
+
+    #[test]
+    fn test_merged_config_missing_source() {
+        let cli = Cli {
+            source: None,
+            target: Some("develop".to_string()),
+            output: Some(PathBuf::from("/tmp/output")),
+            ..create_minimal_cli()
+        };
+        let app_settings = AppSettings::default();
+        let result = MergedConfig::merge(&cli, None, &app_settings);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_merged_config_missing_target() {
+        let cli = Cli {
+            source: Some("main".to_string()),
+            target: None,
+            output: Some(PathBuf::from("/tmp/output")),
+            ..create_minimal_cli()
+        };
+        let app_settings = AppSettings::default();
+        let result = MergedConfig::merge(&cli, None, &app_settings);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_merged_config_missing_output() {
+        let cli = Cli {
+            source: Some("main".to_string()),
+            target: Some("develop".to_string()),
+            output: None,
+            ..create_minimal_cli()
+        };
+        let app_settings = AppSettings::default();
+        let result = MergedConfig::merge(&cli, None, &app_settings);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_merged_config_three_way_requires_base() {
+        let cli = Cli {
+            three_way: true,
+            base: None,
+            ..create_minimal_cli()
+        };
+        let app_settings = AppSettings::default();
+        let result = MergedConfig::merge(&cli, None, &app_settings);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_merged_config_three_way_with_base() {
+        let cli = Cli {
+            three_way: true,
+            base: Some("main".to_string()),
+            ..create_minimal_cli()
+        };
+        let app_settings = AppSettings::default();
+        let result = MergedConfig::merge(&cli, None, &app_settings);
+        assert!(result.is_ok());
+        let config = result.unwrap();
+        assert!(config.three_way);
+        assert_eq!(config.base, Some("main".to_string()));
+    }
+
+    #[test]
+    fn test_merged_config_cli_priority_over_config() {
+        let cli = Cli {
+            source: Some("cli-source".to_string()),
+            verbose: true,
+            ..create_minimal_cli()
+        };
+        let input_config = InputConfig {
+            source: Some("config-source".to_string()),
+            verbose: Some(false),
+            ..InputConfig::default()
+        };
+        let app_settings = AppSettings::default();
+        let result = MergedConfig::merge(&cli, Some(&input_config), &app_settings);
+        assert!(result.is_ok());
+        let config = result.unwrap();
+        // CLI引数が優先される
+        assert_eq!(config.source, "cli-source");
+        assert!(config.verbose);
+    }
+
+    #[test]
+    fn test_merged_config_exclude_merge() {
+        let cli = Cli {
+            exclude: vec!["*.tmp".to_string()],
+            ..create_minimal_cli()
+        };
+        let input_config = InputConfig {
+            exclude: vec!["*.log".to_string()],
+            ..InputConfig::default()
+        };
+        let app_settings = AppSettings {
+            default_exclude: vec!["node_modules/**".to_string()],
+            ..AppSettings::default()
+        };
+        let result = MergedConfig::merge(&cli, Some(&input_config), &app_settings);
+        assert!(result.is_ok());
+        let config = result.unwrap();
+        // 全ての除外パターンがマージされる
+        assert_eq!(config.exclude.len(), 3);
+        assert!(config.exclude.contains(&"node_modules/**".to_string()));
+        assert!(config.exclude.contains(&"*.log".to_string()));
+        assert!(config.exclude.contains(&"*.tmp".to_string()));
+    }
+
+    #[test]
+    fn test_merged_config_filter_status_cli_priority() {
+        let cli = Cli {
+            filter_status: vec!["added".to_string()],
+            ..create_minimal_cli()
+        };
+        let input_config = InputConfig {
+            filter_status: vec!["modified".to_string(), "deleted".to_string()],
+            ..InputConfig::default()
+        };
+        let app_settings = AppSettings::default();
+        let result = MergedConfig::merge(&cli, Some(&input_config), &app_settings);
+        assert!(result.is_ok());
+        let config = result.unwrap();
+        // CLI引数が優先される（マージではない）
+        assert_eq!(config.filter_status.len(), 1);
+        assert_eq!(config.filter_status[0], "added");
+    }
+
+    #[test]
+    fn test_merged_config_to_input_config_roundtrip() {
+        let cli = Cli {
+            force: true,
+            verbose: true,
+            dry_run: true,
+            both_versions: true,
+            ..create_minimal_cli()
+        };
+        let app_settings = AppSettings::default();
+        let merged = MergedConfig::merge(&cli, None, &app_settings).unwrap();
+        let input_config = merged.to_input_config();
+
+        assert_eq!(input_config.source, Some("main".to_string()));
+        assert_eq!(input_config.target, Some("develop".to_string()));
+        assert_eq!(input_config.force, Some(true));
+        assert_eq!(input_config.verbose, Some(true));
+        assert_eq!(input_config.dry_run, Some(true));
+        assert_eq!(input_config.both_versions, Some(true));
+    }
+
+    #[test]
+    fn test_merged_config_default_workers() {
+        let cli = create_minimal_cli();
+        let app_settings = AppSettings::default();
+        let result = MergedConfig::merge(&cli, None, &app_settings);
+        assert!(result.is_ok());
+        let config = result.unwrap();
+        // デフォルトはCPUコア数（1以上であること）
+        assert!(config.workers >= 1);
+    }
+
+    #[test]
+    fn test_merged_config_workers_priority() {
+        let cli = Cli {
+            workers: Some(8),
+            ..create_minimal_cli()
+        };
+        let input_config = InputConfig {
+            workers: Some(4),
+            ..InputConfig::default()
+        };
+        let app_settings = AppSettings {
+            workers: Some(2),
+            ..AppSettings::default()
+        };
+        let result = MergedConfig::merge(&cli, Some(&input_config), &app_settings);
+        assert!(result.is_ok());
+        let config = result.unwrap();
+        // CLI > InputConfig > AppSettings の優先順位
+        assert_eq!(config.workers, 8);
+    }
+
+    #[test]
+    fn test_app_settings_default() {
+        let settings = AppSettings::default();
+        assert!(settings.git_path.is_none());
+        assert!(settings.cache_dir.is_none());
+        assert!(settings.temp_dir.is_none());
+        assert!(settings.workers.is_none());
+        assert!(settings.full_clone.is_none());
+        assert!(settings.color.is_none());
+        assert!(settings.log_level.is_none());
+        assert!(settings.default_exclude.is_empty());
+    }
+
+    #[test]
+    fn test_input_config_default() {
+        let config = InputConfig::default();
+        assert!(config.source.is_none());
+        assert!(config.target.is_none());
+        assert!(config.output.is_none());
+        assert!(config.exclude.is_empty());
+        assert!(config.filter_status.is_empty());
+    }
+}

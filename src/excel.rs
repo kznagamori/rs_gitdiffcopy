@@ -6,7 +6,7 @@ use crate::types::{
     DiffFile, FileStatus, Statistics, ThreeWayDiffFile, ThreeWayStatistics, ThreeWayStatus,
 };
 use chrono::Local;
-use rust_xlsxwriter::{Color, Format, Workbook};
+use rust_xlsxwriter::{Color, Format, FormatBorder, Workbook};
 use std::path::Path;
 
 /// Excel出力
@@ -262,13 +262,17 @@ impl<'a> ExcelWriter<'a> {
             .set_name("File Tree")
             .map_err(|e| crate::error::AppError::Other(e.to_string()))?;
 
-        // ヘッダー
+        // ヘッダー（罫線付き）
         let header_format = Format::new()
             .set_bold()
             .set_background_color(Color::RGB(0x4472C4))
-            .set_font_color(Color::White);
+            .set_font_color(Color::White)
+            .set_border(FormatBorder::Thin);
 
-        let mono_format = Format::new().set_font_name("Consolas");
+        // データセル用フォーマット（罫線付き）
+        let mono_format = Format::new()
+            .set_font_name("Consolas")
+            .set_border(FormatBorder::Thin);
 
         worksheet
             .write_string_with_format(0, 0, "Path", &header_format)
@@ -298,7 +302,7 @@ impl<'a> ExcelWriter<'a> {
                 FileStatus::Unchanged => "unchanged",
             };
 
-            let status_format = self.get_status_format(file.status);
+            let status_format = self.get_status_format_with_border(file.status);
             worksheet
                 .write_string_with_format(row, 1, status_str, &status_format)
                 .map_err(|e| crate::error::AppError::Other(e.to_string()))?;
@@ -324,11 +328,15 @@ impl<'a> ExcelWriter<'a> {
             .set_name("Details")
             .map_err(|e| crate::error::AppError::Other(e.to_string()))?;
 
-        // ヘッダー
+        // ヘッダー（罫線付き）
         let header_format = Format::new()
             .set_bold()
             .set_background_color(Color::RGB(0x4472C4))
-            .set_font_color(Color::White);
+            .set_font_color(Color::White)
+            .set_border(FormatBorder::Thin);
+
+        // データセル用フォーマット（罫線付き）
+        let cell_format = Format::new().set_border(FormatBorder::Thin);
 
         let headers = ["Status", "Directory", "File", "Details"];
         for (col, header) in headers.iter().enumerate() {
@@ -371,18 +379,18 @@ impl<'a> ExcelWriter<'a> {
                 _ => String::new(),
             };
 
-            let status_format = self.get_status_format(file.status);
+            let status_format = self.get_status_format_with_border(file.status);
             worksheet
                 .write_string_with_format(row, 0, status_str, &status_format)
                 .map_err(|e| crate::error::AppError::Other(e.to_string()))?;
             worksheet
-                .write_string(row, 1, dir)
+                .write_string_with_format(row, 1, dir, &cell_format)
                 .map_err(|e| crate::error::AppError::Other(e.to_string()))?;
             worksheet
-                .write_string(row, 2, filename)
+                .write_string_with_format(row, 2, filename, &cell_format)
                 .map_err(|e| crate::error::AppError::Other(e.to_string()))?;
             worksheet
-                .write_string(row, 3, details)
+                .write_string_with_format(row, 3, details, &cell_format)
                 .map_err(|e| crate::error::AppError::Other(e.to_string()))?;
 
             row += 1;
@@ -415,6 +423,19 @@ impl<'a> ExcelWriter<'a> {
             FileStatus::Copied => Format::new().set_font_color(Color::RGB(0x00CCCC)),
             FileStatus::TypeChanged => Format::new().set_font_color(Color::RGB(0x9933FF)),
             FileStatus::Unchanged => Format::new().set_font_color(Color::RGB(0x808080)),
+        }
+    }
+
+    /// ステータスに応じたフォーマットを取得（罫線付き）
+    fn get_status_format_with_border(&self, status: FileStatus) -> Format {
+        match status {
+            FileStatus::Added => Format::new().set_font_color(Color::RGB(0x008000)).set_border(FormatBorder::Thin),
+            FileStatus::Modified => Format::new().set_font_color(Color::RGB(0x0066CC)).set_border(FormatBorder::Thin),
+            FileStatus::Deleted => Format::new().set_font_color(Color::RGB(0xCC0000)).set_border(FormatBorder::Thin),
+            FileStatus::Renamed => Format::new().set_font_color(Color::RGB(0xFF6600)).set_border(FormatBorder::Thin),
+            FileStatus::Copied => Format::new().set_font_color(Color::RGB(0x00CCCC)).set_border(FormatBorder::Thin),
+            FileStatus::TypeChanged => Format::new().set_font_color(Color::RGB(0x9933FF)).set_border(FormatBorder::Thin),
+            FileStatus::Unchanged => Format::new().set_font_color(Color::RGB(0x808080)).set_border(FormatBorder::Thin),
         }
     }
 
@@ -565,7 +586,10 @@ impl<'a> ExcelWriter<'a> {
         let header_format = Format::new()
             .set_bold()
             .set_background_color(Color::RGB(0x4472C4))
-            .set_font_color(Color::White);
+            .set_font_color(Color::White)
+            .set_border(FormatBorder::Thin);
+
+        let cell_format = Format::new().set_border(FormatBorder::Thin);
 
         worksheet
             .write_string_with_format(0, 0, "Path", &header_format)
@@ -577,10 +601,10 @@ impl<'a> ExcelWriter<'a> {
         let mut row = 1u32;
         for file in files {
             worksheet
-                .write_string(row, 0, file.path.display().to_string())
+                .write_string_with_format(row, 0, file.path.display().to_string(), &cell_format)
                 .map_err(|e| crate::error::AppError::Other(e.to_string()))?;
             worksheet
-                .write_string(row, 1, file.status.tag())
+                .write_string_with_format(row, 1, file.status.tag(), &cell_format)
                 .map_err(|e| crate::error::AppError::Other(e.to_string()))?;
             row += 1;
         }
@@ -609,7 +633,10 @@ impl<'a> ExcelWriter<'a> {
         let header_format = Format::new()
             .set_bold()
             .set_background_color(Color::RGB(0x4472C4))
-            .set_font_color(Color::White);
+            .set_font_color(Color::White)
+            .set_border(FormatBorder::Thin);
+
+        let cell_format = Format::new().set_border(FormatBorder::Thin);
 
         let headers = ["Directory", "Filename", "Type", "Base Hash", "Ours Hash", "Theirs Hash"];
 
@@ -636,30 +663,28 @@ impl<'a> ExcelWriter<'a> {
             };
 
             worksheet
-                .write_string(row, 0, dir)
+                .write_string_with_format(row, 0, dir, &cell_format)
                 .map_err(|e| crate::error::AppError::Other(e.to_string()))?;
             worksheet
-                .write_string(row, 1, filename)
+                .write_string_with_format(row, 1, filename, &cell_format)
                 .map_err(|e| crate::error::AppError::Other(e.to_string()))?;
             worksheet
-                .write_string(row, 2, file.status.tag())
+                .write_string_with_format(row, 2, file.status.tag(), &cell_format)
                 .map_err(|e| crate::error::AppError::Other(e.to_string()))?;
 
-            if let Some(ref blob) = file.base_blob {
-                worksheet
-                    .write_string(row, 3, &blob[..8.min(blob.len())])
-                    .map_err(|e| crate::error::AppError::Other(e.to_string()))?;
-            }
-            if let Some(ref blob) = file.ours_blob {
-                worksheet
-                    .write_string(row, 4, &blob[..8.min(blob.len())])
-                    .map_err(|e| crate::error::AppError::Other(e.to_string()))?;
-            }
-            if let Some(ref blob) = file.theirs_blob {
-                worksheet
-                    .write_string(row, 5, &blob[..8.min(blob.len())])
-                    .map_err(|e| crate::error::AppError::Other(e.to_string()))?;
-            }
+            let base_hash = file.base_blob.as_ref().map(|b| &b[..8.min(b.len())]).unwrap_or("");
+            let ours_hash = file.ours_blob.as_ref().map(|b| &b[..8.min(b.len())]).unwrap_or("");
+            let theirs_hash = file.theirs_blob.as_ref().map(|b| &b[..8.min(b.len())]).unwrap_or("");
+
+            worksheet
+                .write_string_with_format(row, 3, base_hash, &cell_format)
+                .map_err(|e| crate::error::AppError::Other(e.to_string()))?;
+            worksheet
+                .write_string_with_format(row, 4, ours_hash, &cell_format)
+                .map_err(|e| crate::error::AppError::Other(e.to_string()))?;
+            worksheet
+                .write_string_with_format(row, 5, theirs_hash, &cell_format)
+                .map_err(|e| crate::error::AppError::Other(e.to_string()))?;
 
             row += 1;
         }
@@ -687,7 +712,10 @@ impl<'a> ExcelWriter<'a> {
         let header_format = Format::new()
             .set_bold()
             .set_background_color(Color::RGB(0x4472C4))
-            .set_font_color(Color::White);
+            .set_font_color(Color::White)
+            .set_border(FormatBorder::Thin);
+
+        let cell_format = Format::new().set_border(FormatBorder::Thin);
 
         let headers = ["Directory", "Filename", "Status", "Source"];
 
@@ -726,16 +754,16 @@ impl<'a> ExcelWriter<'a> {
             };
 
             worksheet
-                .write_string(row, 0, dir)
+                .write_string_with_format(row, 0, dir, &cell_format)
                 .map_err(|e| crate::error::AppError::Other(e.to_string()))?;
             worksheet
-                .write_string(row, 1, filename)
+                .write_string_with_format(row, 1, filename, &cell_format)
                 .map_err(|e| crate::error::AppError::Other(e.to_string()))?;
             worksheet
-                .write_string(row, 2, file.status.tag())
+                .write_string_with_format(row, 2, file.status.tag(), &cell_format)
                 .map_err(|e| crate::error::AppError::Other(e.to_string()))?;
             worksheet
-                .write_string(row, 3, source)
+                .write_string_with_format(row, 3, source, &cell_format)
                 .map_err(|e| crate::error::AppError::Other(e.to_string()))?;
 
             row += 1;

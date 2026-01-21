@@ -9,6 +9,7 @@ use rs_gitdiffcopy::excel::ExcelWriter;
 use rs_gitdiffcopy::git::Git;
 use rs_gitdiffcopy::safety;
 use rs_gitdiffcopy::summary::SummaryWriter;
+use rs_gitdiffcopy::types::expand_filter_status_three_way;
 
 use std::process;
 
@@ -249,11 +250,23 @@ fn execute_three_way(
 
     println!("Found {} files to compare.", files.len());
 
+    // filter_statusに基づいてファイルをフィルタリング（表示用）
+    let display_files: Vec<_> = if !config.filter_status.is_empty() {
+        let allowed_statuses = expand_filter_status_three_way(&config.filter_status);
+        files
+            .iter()
+            .filter(|f| allowed_statuses.contains(&f.status))
+            .cloned()
+            .collect()
+    } else {
+        files.clone()
+    };
+
     // 差分がない場合
     if stats.total() == stats.unchanged {
         let writer = SummaryWriter::new(config);
         writer.write_three_way(
-            &files,
+            &display_files,
             &stats,
             base_ref,
             &base_commit,
@@ -284,7 +297,7 @@ fn execute_three_way(
 
     let writer = SummaryWriter::new(config);
     writer.write_three_way(
-        &files,
+        &display_files,
         &stats,
         base_ref,
         &base_commit,
@@ -300,7 +313,7 @@ fn execute_three_way(
     if let Some(ref excel_path) = config.excel {
         let excel_writer = ExcelWriter::new(config);
         excel_writer.write_three_way(
-            &files,
+            &display_files,
             &stats,
             base_ref,
             &base_commit,

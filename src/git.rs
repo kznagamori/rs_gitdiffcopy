@@ -328,4 +328,254 @@ impl Git {
             .map(|o| o.status.success())
             .unwrap_or(false)
     }
+
+    /// git diff --name-status の出力行をパース（テスト用に公開）
+    pub fn parse_diff_line(line: &str) -> Option<(FileStatus, PathBuf, Option<PathBuf>, Option<u8>)> {
+        if line.is_empty() {
+            return None;
+        }
+
+        let parts: Vec<&str> = line.split('\t').collect();
+        if parts.is_empty() {
+            return None;
+        }
+
+        let status_str = parts[0];
+        let status = match status_str.chars().next() {
+            Some('A') => FileStatus::Added,
+            Some('M') => FileStatus::Modified,
+            Some('D') => FileStatus::Deleted,
+            Some('R') => FileStatus::Renamed,
+            Some('C') => FileStatus::Copied,
+            Some('T') => FileStatus::TypeChanged,
+            _ => return None,
+        };
+
+        let (path, original_path, similarity) = match status {
+            FileStatus::Renamed | FileStatus::Copied => {
+                if parts.len() >= 3 {
+                    let sim = status_str[1..].parse::<u8>().ok();
+                    (
+                        PathBuf::from(parts[2]),
+                        Some(PathBuf::from(parts[1])),
+                        sim,
+                    )
+                } else {
+                    return None;
+                }
+            }
+            _ => {
+                if parts.len() >= 2 {
+                    (PathBuf::from(parts[1]), None, None)
+                } else {
+                    return None;
+                }
+            }
+        };
+
+        Some((status, path, original_path, similarity))
+    }
+
+    /// git ls-tree の出力行をパース（テスト用に公開）
+    pub fn parse_ls_tree_line(line: &str) -> Option<(String, String, PathBuf)> {
+        // 出力形式: 100644 blob abc123...    path/to/file.txt
+        let parts: Vec<&str> = line.splitn(4, |c| c == ' ' || c == '\t').collect();
+        if parts.len() >= 4 {
+            let mode = parts[0].to_string();
+            let blob_id = parts[2].to_string();
+            let path = PathBuf::from(parts[3].trim());
+            Some((mode, blob_id, path))
+        } else {
+            None
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // is_remote_url のテスト
+    #[test]
+    fn test_is_remote_url_https() {
+        assert!(Git::is_remote_url("https://github.com/user/repo.git"));
+        assert!(Git::is_remote_url("https://gitlab.com/user/repo"));
+    }
+
+    #[test]
+    fn test_is_remote_url_http() {
+        assert!(Git::is_remote_url("http://github.com/user/repo.git"));
+    }
+
+    #[test]
+    fn test_is_remote_url_git_protocol() {
+        assert!(Git::is_remote_url("git://github.com/user/repo.git"));
+    }
+
+    #[test]
+    fn test_is_remote_url_ssh() {
+        assert!(Git::is_remote_url("git@github.com:user/repo.git"));
+        assert!(Git::is_remote_url("ssh://git@github.com/user/repo.git"));
+    }
+
+    #[test]
+    fn test_is_remote_url_local_path() {
+        assert!(!Git::is_remote_url("/path/to/repo"));
+        assert!(!Git::is_remote_url("./relative/path"));
+        assert!(!Git::is_remote_url("../parent/path"));
+        assert!(!Git::is_remote_url("C:\\Windows\\path"));
+    }
+
+    // parse_diff_line のテスト
+    #[test]
+    fn test_parse_diff_line_added() {
+        let line = "A\tpath/to/new_file.txt";
+        let result = Git::parse_diff_line(line);
+        assert!(result.is_some());
+        let (status, path, original, similarity) = result.unwrap();
+        assert_eq!(status, FileStatus::Added);
+        assert_eq!(path, PathBuf::from("path/to/new_file.txt"));
+        assert!(original.is_none());
+        assert!(similarity.is_none());
+    }
+
+    #[test]
+    fn test_parse_diff_line_modified() {
+        let line = "M\tpath/to/modified_file.txt";
+        let result = Git::parse_diff_line(line);
+        assert!(result.is_some());
+        let (status, path, _, _) = result.unwrap();
+        assert_eq!(status, FileStatus::Modified);
+        assert_eq!(path, PathBuf::from("path/to/modified_file.txt"));
+    }
+
+    #[test]
+    fn test_parse_diff_line_deleted() {
+        let line = "D\tpath/to/deleted_file.txt";
+        let result = Git::parse_diff_line(line);
+        assert!(result.is_some());
+        let (status, path, _, _) = result.unwrap();
+        assert_eq!(status, FileStatus::Deleted);
+        assert_eq!(path, PathBuf::from("path/to/deleted_file.txt"));
+    }
+
+    #[test]
+    fn test_parse_diff_line_renamed() {
+        let line = "R100\told/path.txt\tnew/path.txt";
+        let result = Git::parse_diff_line(line);
+        assert!(result.is_some());
+        let (status, path, original, similarity) = result.unwrap();
+        assert_eq!(status, FileStatus::Renamed);
+        assert_eq!(path, PathBuf::from("new/path.txt"));
+        assert_eq!(original, Some(PathBuf::from("old/path.txt")));
+        assert_eq!(similarity, Some(100));
+    }
+
+    #[test]
+    fn test_parse_diff_line_renamed_partial_similarity() {
+        let line = "R095\told/path.txt\tnew/path.txt";
+        let result = Git::parse_diff_line(line);
+        assert!(result.is_some());
+        let (status, _, _, similarity) = result.unwrap();
+        assert_eq!(status, FileStatus::Renamed);
+        assert_eq!(similarity, Some(95));
+    }
+
+    #[test]
+    fn test_parse_diff_line_copied() {
+        let line = "C100\tsrc/path.txt\tdst/path.txt";
+        let result = Git::parse_diff_line(line);
+        assert!(result.is_some());
+        let (status, path, original, similarity) = result.unwrap();
+        assert_eq!(status, FileStatus::Copied);
+        assert_eq!(path, PathBuf::from("dst/path.txt"));
+        assert_eq!(original, Some(PathBuf::from("src/path.txt")));
+        assert_eq!(similarity, Some(100));
+    }
+
+    #[test]
+    fn test_parse_diff_line_type_changed() {
+        let line = "T\tpath/to/typechange.txt";
+        let result = Git::parse_diff_line(line);
+        assert!(result.is_some());
+        let (status, _, _, _) = result.unwrap();
+        assert_eq!(status, FileStatus::TypeChanged);
+    }
+
+    #[test]
+    fn test_parse_diff_line_empty() {
+        let result = Git::parse_diff_line("");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_parse_diff_line_invalid_status() {
+        let line = "X\tpath/to/file.txt";
+        let result = Git::parse_diff_line(line);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_parse_diff_line_japanese_path() {
+        let line = "A\tパス/日本語/ファイル.txt";
+        let result = Git::parse_diff_line(line);
+        assert!(result.is_some());
+        let (status, path, _, _) = result.unwrap();
+        assert_eq!(status, FileStatus::Added);
+        assert_eq!(path, PathBuf::from("パス/日本語/ファイル.txt"));
+    }
+
+    // parse_ls_tree_line のテスト
+    #[test]
+    fn test_parse_ls_tree_line_normal_file() {
+        let line = "100644 blob abc123def456 path/to/file.txt";
+        let result = Git::parse_ls_tree_line(line);
+        assert!(result.is_some());
+        let (mode, blob_id, path) = result.unwrap();
+        assert_eq!(mode, "100644");
+        assert_eq!(blob_id, "abc123def456");
+        assert_eq!(path, PathBuf::from("path/to/file.txt"));
+    }
+
+    #[test]
+    fn test_parse_ls_tree_line_executable() {
+        let line = "100755 blob def789abc123 scripts/build.sh";
+        let result = Git::parse_ls_tree_line(line);
+        assert!(result.is_some());
+        let (mode, _, _) = result.unwrap();
+        assert_eq!(mode, "100755");
+    }
+
+    #[test]
+    fn test_parse_ls_tree_line_symlink() {
+        let line = "120000 blob 123456789abc link_name";
+        let result = Git::parse_ls_tree_line(line);
+        assert!(result.is_some());
+        let (mode, _, _) = result.unwrap();
+        assert_eq!(mode, "120000");
+    }
+
+    #[test]
+    fn test_parse_ls_tree_line_submodule() {
+        let line = "160000 commit abcdef123456 submodule_path";
+        let result = Git::parse_ls_tree_line(line);
+        assert!(result.is_some());
+        let (mode, _, _) = result.unwrap();
+        assert_eq!(mode, "160000");
+    }
+
+    #[test]
+    fn test_parse_ls_tree_line_invalid() {
+        let result = Git::parse_ls_tree_line("invalid line");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_parse_ls_tree_line_japanese_path() {
+        let line = "100644 blob abc123 日本語/ファイル.txt";
+        let result = Git::parse_ls_tree_line(line);
+        assert!(result.is_some());
+        let (_, _, path) = result.unwrap();
+        assert_eq!(path, PathBuf::from("日本語/ファイル.txt"));
+    }
 }

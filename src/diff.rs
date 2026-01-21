@@ -367,4 +367,231 @@ impl<'a> DiffDetector<'a> {
 
         stats
     }
+
+    /// 三者間比較の状態を判定（テスト用に公開）
+    pub fn determine_three_way_status_static(
+        base: Option<&(String, String)>,
+        ours: Option<&(String, String)>,
+        theirs: Option<&(String, String)>,
+    ) -> ThreeWayStatus {
+        match (base, ours, theirs) {
+            // baseに存在する場合
+            (Some((_, base_blob)), Some((_, ours_blob)), Some((_, theirs_blob))) => {
+                if base_blob == ours_blob && base_blob == theirs_blob {
+                    ThreeWayStatus::Unchanged
+                } else if base_blob != ours_blob && base_blob == theirs_blob {
+                    ThreeWayStatus::OursOnly
+                } else if base_blob == ours_blob && base_blob != theirs_blob {
+                    ThreeWayStatus::TheirsOnly
+                } else if ours_blob == theirs_blob {
+                    ThreeWayStatus::BothSame
+                } else {
+                    ThreeWayStatus::Conflict
+                }
+            }
+            // baseに存在、oursで削除
+            (Some(_), None, Some((_, theirs_blob))) => {
+                if let Some((_, base_blob)) = base {
+                    if base_blob == theirs_blob {
+                        ThreeWayStatus::DeletedOurs
+                    } else {
+                        ThreeWayStatus::DeleteModify
+                    }
+                } else {
+                    ThreeWayStatus::DeletedOurs
+                }
+            }
+            // baseに存在、theirsで削除
+            (Some(_), Some((_, ours_blob)), None) => {
+                if let Some((_, base_blob)) = base {
+                    if base_blob == ours_blob {
+                        ThreeWayStatus::DeletedTheirs
+                    } else {
+                        ThreeWayStatus::ModifyDelete
+                    }
+                } else {
+                    ThreeWayStatus::DeletedTheirs
+                }
+            }
+            // baseに存在、両方で削除
+            (Some(_), None, None) => ThreeWayStatus::DeletedBoth,
+            // baseに存在しない、oursで追加
+            (None, Some(_), None) => ThreeWayStatus::AddedOurs,
+            // baseに存在しない、theirsで追加
+            (None, None, Some(_)) => ThreeWayStatus::AddedTheirs,
+            // baseに存在しない、両方で追加
+            (None, Some((_, ours_blob)), Some((_, theirs_blob))) => {
+                if ours_blob == theirs_blob {
+                    ThreeWayStatus::AddedBothSame
+                } else {
+                    ThreeWayStatus::AddedBothDiff
+                }
+            }
+            // どこにも存在しない（通常発生しない）
+            (None, None, None) => ThreeWayStatus::Unchanged,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // determine_three_way_status_static のテスト
+
+    #[test]
+    fn test_three_way_unchanged() {
+        let base = ("100644".to_string(), "abc123".to_string());
+        let ours = ("100644".to_string(), "abc123".to_string());
+        let theirs = ("100644".to_string(), "abc123".to_string());
+        let status = DiffDetector::determine_three_way_status_static(Some(&base), Some(&ours), Some(&theirs));
+        assert_eq!(status, ThreeWayStatus::Unchanged);
+    }
+
+    #[test]
+    fn test_three_way_ours_only() {
+        let base = ("100644".to_string(), "abc123".to_string());
+        let ours = ("100644".to_string(), "def456".to_string()); // oursで変更
+        let theirs = ("100644".to_string(), "abc123".to_string());
+        let status = DiffDetector::determine_three_way_status_static(Some(&base), Some(&ours), Some(&theirs));
+        assert_eq!(status, ThreeWayStatus::OursOnly);
+    }
+
+    #[test]
+    fn test_three_way_theirs_only() {
+        let base = ("100644".to_string(), "abc123".to_string());
+        let ours = ("100644".to_string(), "abc123".to_string());
+        let theirs = ("100644".to_string(), "def456".to_string()); // theirsで変更
+        let status = DiffDetector::determine_three_way_status_static(Some(&base), Some(&ours), Some(&theirs));
+        assert_eq!(status, ThreeWayStatus::TheirsOnly);
+    }
+
+    #[test]
+    fn test_three_way_both_same() {
+        let base = ("100644".to_string(), "abc123".to_string());
+        let ours = ("100644".to_string(), "def456".to_string()); // 両方が同じ変更
+        let theirs = ("100644".to_string(), "def456".to_string());
+        let status = DiffDetector::determine_three_way_status_static(Some(&base), Some(&ours), Some(&theirs));
+        assert_eq!(status, ThreeWayStatus::BothSame);
+    }
+
+    #[test]
+    fn test_three_way_conflict() {
+        let base = ("100644".to_string(), "abc123".to_string());
+        let ours = ("100644".to_string(), "def456".to_string()); // 両方が異なる変更
+        let theirs = ("100644".to_string(), "ghi789".to_string());
+        let status = DiffDetector::determine_three_way_status_static(Some(&base), Some(&ours), Some(&theirs));
+        assert_eq!(status, ThreeWayStatus::Conflict);
+    }
+
+    #[test]
+    fn test_three_way_deleted_ours() {
+        let base = ("100644".to_string(), "abc123".to_string());
+        let theirs = ("100644".to_string(), "abc123".to_string()); // theirsは変更なし
+        // oursは削除（None）
+        let status = DiffDetector::determine_three_way_status_static(Some(&base), None, Some(&theirs));
+        assert_eq!(status, ThreeWayStatus::DeletedOurs);
+    }
+
+    #[test]
+    fn test_three_way_deleted_theirs() {
+        let base = ("100644".to_string(), "abc123".to_string());
+        let ours = ("100644".to_string(), "abc123".to_string()); // oursは変更なし
+        // theirsは削除（None）
+        let status = DiffDetector::determine_three_way_status_static(Some(&base), Some(&ours), None);
+        assert_eq!(status, ThreeWayStatus::DeletedTheirs);
+    }
+
+    #[test]
+    fn test_three_way_deleted_both() {
+        let base = ("100644".to_string(), "abc123".to_string());
+        // 両方で削除
+        let status = DiffDetector::determine_three_way_status_static(Some(&base), None, None);
+        assert_eq!(status, ThreeWayStatus::DeletedBoth);
+    }
+
+    #[test]
+    fn test_three_way_delete_modify_conflict() {
+        let base = ("100644".to_string(), "abc123".to_string());
+        let theirs = ("100644".to_string(), "def456".to_string()); // theirsで変更
+        // oursは削除（コンフリクト）
+        let status = DiffDetector::determine_three_way_status_static(Some(&base), None, Some(&theirs));
+        assert_eq!(status, ThreeWayStatus::DeleteModify);
+    }
+
+    #[test]
+    fn test_three_way_modify_delete_conflict() {
+        let base = ("100644".to_string(), "abc123".to_string());
+        let ours = ("100644".to_string(), "def456".to_string()); // oursで変更
+        // theirsは削除（コンフリクト）
+        let status = DiffDetector::determine_three_way_status_static(Some(&base), Some(&ours), None);
+        assert_eq!(status, ThreeWayStatus::ModifyDelete);
+    }
+
+    #[test]
+    fn test_three_way_added_ours() {
+        let ours = ("100644".to_string(), "abc123".to_string());
+        // baseに存在せず、oursでのみ追加
+        let status = DiffDetector::determine_three_way_status_static(None, Some(&ours), None);
+        assert_eq!(status, ThreeWayStatus::AddedOurs);
+    }
+
+    #[test]
+    fn test_three_way_added_theirs() {
+        let theirs = ("100644".to_string(), "abc123".to_string());
+        // baseに存在せず、theirsでのみ追加
+        let status = DiffDetector::determine_three_way_status_static(None, None, Some(&theirs));
+        assert_eq!(status, ThreeWayStatus::AddedTheirs);
+    }
+
+    #[test]
+    fn test_three_way_added_both_same() {
+        let ours = ("100644".to_string(), "abc123".to_string());
+        let theirs = ("100644".to_string(), "abc123".to_string()); // 同じ内容で追加
+        let status = DiffDetector::determine_three_way_status_static(None, Some(&ours), Some(&theirs));
+        assert_eq!(status, ThreeWayStatus::AddedBothSame);
+    }
+
+    #[test]
+    fn test_three_way_added_both_diff() {
+        let ours = ("100644".to_string(), "abc123".to_string());
+        let theirs = ("100644".to_string(), "def456".to_string()); // 異なる内容で追加（コンフリクト）
+        let status = DiffDetector::determine_three_way_status_static(None, Some(&ours), Some(&theirs));
+        assert_eq!(status, ThreeWayStatus::AddedBothDiff);
+    }
+
+    #[test]
+    fn test_three_way_none_everywhere() {
+        // どこにも存在しない（通常発生しない）
+        let status = DiffDetector::determine_three_way_status_static(None, None, None);
+        assert_eq!(status, ThreeWayStatus::Unchanged);
+    }
+
+    // Statistics計算のテスト
+    #[test]
+    fn test_calculate_statistics_empty() {
+        let files: Vec<DiffFile> = vec![];
+        let stats = Statistics::default();
+        assert_eq!(stats.total(), 0);
+    }
+
+    #[test]
+    fn test_diff_file_is_permission_only_change() {
+        let mut file = DiffFile::new(PathBuf::from("test.sh"), FileStatus::Modified);
+        file.source_mode = Some("100644".to_string());
+        file.target_mode = Some("100755".to_string());
+        file.source_blob = Some("abc123".to_string());
+        file.target_blob = Some("abc123".to_string()); // 同じ内容
+        assert!(file.is_permission_only_change());
+    }
+
+    #[test]
+    fn test_diff_file_is_not_permission_only_change() {
+        let mut file = DiffFile::new(PathBuf::from("test.rs"), FileStatus::Modified);
+        file.source_mode = Some("100644".to_string());
+        file.target_mode = Some("100755".to_string());
+        file.source_blob = Some("abc123".to_string());
+        file.target_blob = Some("def456".to_string()); // 異なる内容
+        assert!(!file.is_permission_only_change());
+    }
 }
