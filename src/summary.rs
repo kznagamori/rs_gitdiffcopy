@@ -428,36 +428,132 @@ impl<'a> SummaryWriter<'a> {
         output.push_str("Legend: [Base|Ours|Theirs] ○=exists -=missing ==same M=modified A=added D=deleted\n");
         output.push_str(".\n");
 
+        // ファイルをディレクトリ構造に整理
+        let tree = self.build_three_way_tree(files);
+
         // ファイル出力時のみ整列のため最長幅を計算
         let max_width = if to_file {
-            files.iter()
-                .map(|f| {
-                    let line = format!("├── {}", f.path.display());
-                    display_width(&line)
-                })
-                .max()
-                .unwrap_or(0)
+            self.calculate_max_three_way_tree_width(&tree, "")
         } else {
             0 // コンソール出力はコンパクト形式（整列なし）
         };
 
-        let file_count = files.len();
-        for (i, file) in files.iter().enumerate() {
-            let connector = if i == file_count - 1 { "└── " } else { "├── " };
-            let line = format!("{}{}", connector, file.path.display());
-            let indicator = file.status.indicator();
-            let tag = file.status.tag();
+        self.write_three_way_tree_node(output, &tree, "", true, max_width);
+    }
 
-            if to_file && max_width > 0 {
-                let current_width = display_width(&line);
-                let padding = if max_width > current_width {
-                    " ".repeat(max_width - current_width)
-                } else {
-                    String::new()
-                };
-                output.push_str(&format!("{}{} {} {}\n", line, padding, indicator, tag));
-            } else {
-                output.push_str(&format!("{} {} {}\n", line, indicator, tag));
+    /// 三者間比較用ディレクトリツリーを構築
+    fn build_three_way_tree(&self, files: &[ThreeWayDiffFile]) -> BTreeMap<String, ThreeWayTreeNode> {
+        let mut root = BTreeMap::new();
+
+        for file in files {
+            let components: Vec<_> = file.path.components().collect();
+            Self::insert_into_three_way_tree(&mut root, &components, 0, file);
+        }
+
+        root
+    }
+
+    /// 三者間比較用ツリーにファイルを挿入（再帰ヘルパー）
+    fn insert_into_three_way_tree(
+        tree: &mut BTreeMap<String, ThreeWayTreeNode>,
+        components: &[std::path::Component],
+        index: usize,
+        file: &ThreeWayDiffFile,
+    ) {
+        if index >= components.len() {
+            return;
+        }
+
+        let name = components[index].as_os_str().to_string_lossy().to_string();
+        let is_last = index == components.len() - 1;
+
+        if is_last {
+            tree.entry(name).or_insert_with(|| ThreeWayTreeNode::File(file.clone()));
+        } else {
+            let entry = tree
+                .entry(name)
+                .or_insert_with(|| ThreeWayTreeNode::Dir(BTreeMap::new()));
+            if let ThreeWayTreeNode::Dir(children) = entry {
+                Self::insert_into_three_way_tree(children, components, index + 1, file);
+            }
+        }
+    }
+
+    /// 三者間比較用ツリー内の最長行幅を計算
+    fn calculate_max_three_way_tree_width(&self, tree: &BTreeMap<String, ThreeWayTreeNode>, prefix: &str) -> usize {
+        let mut max_width = 0usize;
+        let entries: Vec<_> = tree.iter().collect();
+        let len = entries.len();
+
+        for (i, (name, node)) in entries.iter().enumerate() {
+            let is_last_entry = i == len - 1;
+            let connector = if is_last_entry { "└── " } else { "├── " };
+            let child_prefix = if is_last_entry { "    " } else { "│   " };
+
+            match node {
+                ThreeWayTreeNode::File(_) => {
+                    let line = format!("{}{}{}", prefix, connector, name);
+                    let width = display_width(&line);
+                    if width > max_width {
+                        max_width = width;
+                    }
+                }
+                ThreeWayTreeNode::Dir(children) => {
+                    let line = format!("{}{}{}/", prefix, connector, name);
+                    let width = display_width(&line);
+                    if width > max_width {
+                        max_width = width;
+                    }
+                    let child_max = self.calculate_max_three_way_tree_width(children, &format!("{}{}", prefix, child_prefix));
+                    if child_max > max_width {
+                        max_width = child_max;
+                    }
+                }
+            }
+        }
+
+        max_width
+    }
+
+    /// 三者間比較用ツリーノードを出力
+    fn write_three_way_tree_node(
+        &self,
+        output: &mut String,
+        tree: &BTreeMap<String, ThreeWayTreeNode>,
+        prefix: &str,
+        _is_last: bool,
+        max_width: usize,
+    ) {
+        let entries: Vec<_> = tree.iter().collect();
+        let len = entries.len();
+
+        for (i, (name, node)) in entries.iter().enumerate() {
+            let is_last_entry = i == len - 1;
+            let connector = if is_last_entry { "└── " } else { "├── " };
+            let child_prefix = if is_last_entry { "    " } else { "│   " };
+
+            match node {
+                ThreeWayTreeNode::File(file) => {
+                    let line = format!("{}{}{}", prefix, connector, name);
+                    let indicator = file.status.indicator();
+                    let tag = file.status.tag();
+
+                    if max_width > 0 {
+                        let current_width = display_width(&line);
+                        let padding = if max_width > current_width {
+                            " ".repeat(max_width - current_width)
+                        } else {
+                            String::new()
+                        };
+                        output.push_str(&format!("{}{} {} {}\n", line, padding, indicator, tag));
+                    } else {
+                        output.push_str(&format!("{} {} {}\n", line, indicator, tag));
+                    }
+                }
+                ThreeWayTreeNode::Dir(children) => {
+                    output.push_str(&format!("{}{}{}/\n", prefix, connector, name));
+                    self.write_three_way_tree_node(output, children, &format!("{}{}", prefix, child_prefix), is_last_entry, max_width);
+                }
             }
         }
     }
@@ -722,6 +818,12 @@ impl<'a> SummaryWriter<'a> {
 enum TreeNode {
     File(DiffFile),
     Dir(BTreeMap<String, TreeNode>),
+}
+
+/// 三者間比較用ツリーノード
+enum ThreeWayTreeNode {
+    File(ThreeWayDiffFile),
+    Dir(BTreeMap<String, ThreeWayTreeNode>),
 }
 
 #[cfg(test)]

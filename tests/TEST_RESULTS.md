@@ -15,8 +15,8 @@
 | カテゴリ | テスト数 | PASS | FAIL | スキップ |
 |---------|---------|------|------|---------|
 | ユニットテスト | 159 | 159 | 0 | 0 |
-| 結合テスト | 156 | 156 | 0 | 0 |
-| **合計** | **315** | **315** | **0** | **0** |
+| 結合テスト | 158 | 158 | 0 | 0 |
+| **合計** | **317** | **317** | **0** | **0** |
 
 ---
 
@@ -66,6 +66,13 @@
 | THREE-COPY-003 | test_three_way_copy_output_both_same | PASS | BothSameサフィックス |
 | THREE-COPY-004 | test_three_way_copy_output_conflict | PASS | Conflictサフィックス（base, ours, theirs） |
 | THREE-COPY-005 | test_three_way_copy_output_nested_directory | PASS | ネストされたディレクトリ |
+
+### 3.2 三者間比較FileTreeディレクトリ構造テスト (2テスト)
+
+| テストID | テスト名 | 結果 | 備考 |
+|---------|---------|------|------|
+| THREE-TREE-001 | test_three_way_file_tree_nested_directory_structure | PASS | ネストされたディレクトリ構造表示 |
+| THREE-TREE-002 | test_three_way_file_tree_console_output_structure | PASS | コンソールTree構造出力 |
 
 ### 4. オプションテスト (17テスト)
 
@@ -520,6 +527,7 @@
 | 2026-01-22 | 00:30 | 148/148 | 149/149 | ALL PASSED | Excel行グルーピング機能、FileTree分割テスト追加（19件追加） |
 | 2026-01-22 | 01:00 | 148/148 | 151/151 | ALL PASSED | Status列位置検証テスト追加（2件追加）、status_col修正対応 |
 | 2026-01-22 | 01:30 | 159/159 | 156/156 | ALL PASSED | 三者間コピー出力形式修正（Unit+11件、結合+5件）、ステータスサフィックス形式対応 |
+| 2026-01-22 | 02:00 | 159/159 | 158/158 | ALL PASSED | 三者間FileTree表示修正（結合+2件）、Tree構造出力対応 |
 
 ---
 
@@ -574,3 +582,4 @@ cargo test 2>&1 | tee test_output.txt
 | 2026-01-22 | Cargo.toml の rust_xlsxwriter を0.92に更新（group_rows API対応） |
 | 2026-01-22 | excel.rs のwrite_file_tree_sheet, write_three_way_file_tree_sheetでstatus_col計算を修正（max_depth + 1）|
 | 2026-01-22 | copy.rs の三者間コピー処理をステータスサフィックス形式に変更（ステータス別ディレクトリからフラット構造へ） |
+| 2026-01-22 | summary.rs の三者間比較FileTree表示をTree構造に修正（ThreeWayTreeNode, build_three_way_tree等を追加） |

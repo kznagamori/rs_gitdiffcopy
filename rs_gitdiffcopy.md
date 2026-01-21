@@ -3,7 +3,7 @@
 ## 1. プロジェクト概要
 
 - **アプリケーション名**: `rs_gitdiffcopy`
-- **バージョン**: `v1.0.0`
+- **バージョン**: `v1.0.1`
 - **開発目的**: git diffコマンドの出力は初心者には変更点が分かりにくいため、初心者・非技術者でもgitの変更点が視覚的に分かるツールを作成
 - **ゴール**: Gitリポジトリの2つのコミット/ブランチ/タグを比較し、差異があるファイルを階層構造を維持したまま別フォルダへ抽出する
 - **想定ユーザー**: 初心者、非技術者
@@ -22,7 +22,7 @@
 
 ---
 
-## 3. 機能一覧（v1.0.0）
+## 3. 機能一覧（v1.0.1）
 
 ### 3.1 比較コア機能
 
@@ -1242,6 +1242,9 @@ No differences found.
   - A列の値は行2で"b/"、行6で"c/"と変わるタイミングのみ記載
   - B列の値は親ディレクトリが変わるか、値自体が変わる場合に記載
   - 中間ディレクトリ行（Statusが空の行）はfold-levelの対象になる
+- **Status列の位置**: Status列は常に「最大深さ + 1」列目に配置
+  - 最大深さ3のファイル構造の場合、A〜C列がパスコンポーネント、D列がStatus
+  - パスコンポーネントとStatus列が重ならないよう、動的に列位置を計算
 - **フォント**: 等幅フォント（Consolas）を使用
 - **ディレクトリ区切り罫線**: 第1階層（A列）のディレクトリが変わるタイミングで下罫線を追加
   - 上記例では行1、行5、行9の下に罫線を追加し、ディレクトリ単位を視覚的に区切る
@@ -1370,34 +1373,50 @@ rs_gitdiffcopy -3 -B main -S feature/a -T feature/b -O output --filter-status ou
 
 ### 12.5 出力構造（三者間モード）
 
+三者間モードでは、元のディレクトリ構造を維持したまま、ファイル名にステータスサフィックスを付与してコピーします。
+
 ```
 output_dir/
-├── ours_only/           # oursのみ変更されたファイル
-│   └── src/feature.rs
-├── theirs_only/         # theirsのみ変更されたファイル
-│   └── src/bugfix.rs
-├── both_same/           # 両方が同じ変更をしたファイル
-│   └── config.toml
-├── conflicts/           # コンフリクトが発生したファイル
-│   ├── src/
-│   │   ├── handler.rs.base
-│   │   ├── handler.rs.ours
-│   │   └── handler.rs.theirs
-│   └── ...
+├── src/
+│   ├── feature.rs.ours-only           # oursのみ変更
+│   ├── bugfix.rs.theirs-only          # theirsのみ変更
+│   ├── handler.rs.conflict.base       # コンフリクト（base版）
+│   ├── handler.rs.conflict.ours       # コンフリクト（ours版）
+│   └── handler.rs.conflict.theirs     # コンフリクト（theirs版）
+├── config.toml.both-same              # 両方が同じ変更
+├── new_ours.txt.added-ours            # oursで追加
+├── new_theirs.txt.added-theirs        # theirsで追加
 └── summary.txt
 ```
 
-`--merge-style` オプションによる出力の違い：
+#### ステータスサフィックス一覧
+
+| ステータス | サフィックス | 説明 |
+|-----------|-------------|------|
+| ours-only | `.ours-only` | oursのみ変更されたファイル |
+| theirs-only | `.theirs-only` | theirsのみ変更されたファイル |
+| both-same | `.both-same` | 両方が同じ変更をしたファイル |
+| added-ours | `.added-ours` | oursで追加されたファイル |
+| added-theirs | `.added-theirs` | theirsで追加されたファイル |
+| added-both-same | `.added-both-same` | 両方で同じ内容を追加 |
+| deleted-ours | `.deleted-ours` | oursで削除されたファイル（source版をコピー） |
+| deleted-theirs | `.deleted-theirs` | theirsで削除されたファイル（source版をコピー） |
+| conflict | `.conflict.base`, `.conflict.ours`, `.conflict.theirs` | コンフリクト（3バージョン出力） |
+| added-both-diff | `.added-both-diff.ours`, `.added-both-diff.theirs` | 両方で異なる内容を追加（コンフリクト） |
+| modify-delete | `.modify-delete.base`, `.modify-delete.ours` | oursで変更、theirsで削除（コンフリクト） |
+| delete-modify | `.delete-modify.base`, `.delete-modify.theirs` | oursで削除、theirsで変更（コンフリクト） |
+
+#### `--merge-style` オプションによる出力の違い
 
 | スタイル | 出力内容 |
 |---------|---------|
-| `all` | base/ours/theirs全てのバージョンを出力（デフォルト） |
-| `ours` | oursバージョンのみ出力 |
-| `theirs` | theirsバージョンのみ出力 |
+| `all` | コンフリクト時にbase/ours/theirs全てのバージョンを出力（デフォルト） |
+| `ours` | コンフリクト時にoursバージョンのみ出力 |
+| `theirs` | コンフリクト時にtheirsバージョンのみ出力 |
 
-例: `--merge-style ours` の場合、conflicts配下は `.ours` のみが出力されます。
+例: `--merge-style ours` の場合、コンフリクトファイルは `.conflict.ours` のみが出力されます。
 
-例: `--merge-style theirs` の場合、conflicts配下は `.theirs` のみが出力されます。
+例: `--merge-style theirs` の場合、コンフリクトファイルは `.conflict.theirs` のみが出力されます。
 
 ### 12.6 サマリー出力形式（三者間モード）
 
@@ -1733,3 +1752,13 @@ git log -1 --format=%ci abc123 -- path/to/file.txt
 git diff -M -C abc123 def456 -- path/to/file.txt  # 個別ファイルのパッチ
 git diff -M -C abc123 def456                       # 全変更のパッチ
 ```
+
+---
+
+## 20. 要件定義 変更履歴
+
+| 日付 | バージョン | 変更内容 |
+|------|-----------|---------|
+| 2026-01-22 | 1.0.1 | Excel File TreeのStatus列位置仕様を明記（最大深さ + 1列目に配置） |
+| 2026-01-22 | 1.0.1 | 三者間モードのファイル出力形式を修正（ステータス別サブディレクトリからステータスサフィックス形式に変更） |
+| 2026-01-22 | 1.0.1 | 三者間モードのFileTree表示がTree構造で出力されることを確認（コンソール・サマリーファイル両方） |

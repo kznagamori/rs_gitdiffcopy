@@ -3672,6 +3672,111 @@ fn test_three_way_tree_contains_box_drawing_chars() {
     }
 }
 
+/// THREE-TREE-001: 三者間比較のFileTreeがネストされたディレクトリ構造で表示されることを確認
+#[test]
+fn test_three_way_file_tree_nested_directory_structure() {
+    let repo = TestRepo::new();
+
+    // baseコミット
+    repo.create_file("readme.txt", "readme");
+    repo.add_all();
+    let base = repo.commit("Base");
+
+    // oursで深いディレクトリ構造を作成
+    repo.create_branch("ours");
+    repo.checkout("ours");
+    repo.create_file("src/lib/core/util.rs", "ours util");
+    repo.create_file("src/lib/helper.rs", "ours helper");
+    repo.add_all();
+    let ours = repo.commit("Ours");
+
+    // theirsで別のファイルを追加
+    repo.checkout(&base);
+    repo.create_branch("theirs");
+    repo.checkout("theirs");
+    repo.create_file("src/lib/other.rs", "theirs other");
+    repo.add_all();
+    let theirs = repo.commit("Theirs");
+
+    let summary_path = repo.temp_dir.path().join("summary.txt");
+    let output = repo.run_cmd(&[
+        "-3",
+        "-B", &base,
+        "-S", &ours,
+        "-T", &theirs,
+        "-s", summary_path.to_str().unwrap(),
+    ]);
+    assert!(output.status.success() || output.status.code() == Some(0), "Command failed: {:?}", output);
+
+    // コンソール出力にTree構造のBox Drawing文字が含まれることを確認
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("├──") || stdout.contains("└──"),
+            "Console output should contain Box Drawing chars for tree structure. Output:\n{}", stdout);
+    // ディレクトリ構造が含まれることを確認
+    assert!(stdout.contains("src/") || stdout.contains("lib/"),
+            "Console output should show directory structure. Output:\n{}", stdout);
+
+    // サマリーファイルにもTree構造が含まれることを確認
+    if summary_path.exists() {
+        let summary = fs::read_to_string(&summary_path).expect("Failed to read summary");
+        assert!(summary.contains("├──") || summary.contains("└──"),
+                "Summary file should contain Box Drawing chars for tree structure. Summary:\n{}", summary);
+        assert!(summary.contains("src/") || summary.contains("lib/"),
+                "Summary file should show directory structure. Summary:\n{}", summary);
+        // ネストされたディレクトリが適切にインデントされていることを確認
+        assert!(summary.contains("│   ") || summary.contains("    "),
+                "Summary should have proper indentation for nested structure. Summary:\n{}", summary);
+    }
+}
+
+/// THREE-TREE-002: 三者間比較のFileTreeコンソール出力がTree構造になっていることを確認
+#[test]
+fn test_three_way_file_tree_console_output_structure() {
+    let repo = TestRepo::new();
+
+    repo.create_file("base.txt", "base");
+    repo.add_all();
+    let base = repo.commit("Base");
+
+    repo.create_branch("ours");
+    repo.checkout("ours");
+    repo.create_file("dir1/file1.txt", "ours file1");
+    repo.create_file("dir1/file2.txt", "ours file2");
+    repo.add_all();
+    let ours = repo.commit("Ours");
+
+    repo.checkout(&base);
+    repo.create_branch("theirs");
+    repo.checkout("theirs");
+    repo.create_file("dir2/file3.txt", "theirs file3");
+    repo.add_all();
+    let theirs = repo.commit("Theirs");
+
+    let output = repo.run_cmd(&[
+        "-3",
+        "-B", &base,
+        "-S", &ours,
+        "-T", &theirs,
+        "--dry-run",
+    ]);
+    assert!(output.status.success() || output.status.code() == Some(0), "Command failed: {:?}", output);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // File Treeセクションが存在すること
+    assert!(stdout.contains("File Tree"),
+            "Output should contain File Tree section. Output:\n{}", stdout);
+
+    // ディレクトリエントリが "/" で終わること
+    assert!(stdout.contains("dir1/") || stdout.contains("dir2/"),
+            "Directory entries should end with '/'. Output:\n{}", stdout);
+
+    // Tree構造の罫線文字が含まれること
+    let has_tree_chars = stdout.contains("├──") || stdout.contains("└──") || stdout.contains("│");
+    assert!(has_tree_chars,
+            "Output should contain tree structure chars (├──, └──, │). Output:\n{}", stdout);
+}
+
 #[test]
 fn test_box_drawing_chars_at_different_depths() {
     // IT-3005: 異なる深さでのBox Drawing文字

@@ -94,6 +94,15 @@ cargo test --test integration_tests -- --test-threads=1 2>&1 | tee test_output.t
 
 ---
 
+### 3.2 三者間比較FileTreeディレクトリ構造テスト
+
+| テストID | テスト名 | テスト内容 | 期待結果 | 分類 |
+|---------|---------|-----------|---------|------|
+| THREE-TREE-001 | test_three_way_file_tree_nested_directory_structure | ネストされたディレクトリ構造のFileTree表示 | コンソール・サマリーファイルにBox Drawing文字(├──, └──, │)を使ったTree構造で表示 | 正常系 |
+| THREE-TREE-002 | test_three_way_file_tree_console_output_structure | コンソール出力のFileTree構造 | ディレクトリは"/"で終わり、Tree構造の罫線文字が含まれる | 正常系 |
+
+---
+
 ### 4. オプションテスト
 
 | テストID | テスト名 | テスト内容 | 期待結果 | 分類 |
@@ -491,3 +500,4 @@ cargo test --test integration_tests 2>&1 | tee test_output.txt
 | 2026-01-22 | 1.4 | ExcelファイルTree ディレクトリ分割形式テスト (EXCEL-TREE-001〜002)、Excelファイル グルーピング機能テスト (EXCEL-GROUP-001〜003) を追加 |
 | 2026-01-22 | 1.5 | ExcelファイルTree Status列位置検証テスト (EXCEL-TREE-003〜004) を追加：Status列がパスコンポーネントと重ならないことを検証 |
 | 2026-01-22 | 1.6 | 三者間比較ファイル出力形式テスト (THREE-COPY-001〜005) を追加：ステータスサフィックス形式のファイル出力検証 |
+| 2026-01-22 | 1.7 | 三者間比較FileTreeディレクトリ構造テスト (THREE-TREE-001〜002) を追加：Tree構造表示の検証 |
