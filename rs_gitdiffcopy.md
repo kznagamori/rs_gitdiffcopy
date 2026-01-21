@@ -941,7 +941,7 @@ Completed.
 
 ### 11.1 差分ありの場合（ローカルリポジトリ）
 
-```
+````
 rs_gitdiffcopy Summary
 ======================
 Repository: /path/to/repo
@@ -1085,7 +1085,7 @@ Errors
 Copy Failed
 ================
   docs/guide.pdf
-```
+````
 
 ### 11.2 リモートリポジトリの場合
 
